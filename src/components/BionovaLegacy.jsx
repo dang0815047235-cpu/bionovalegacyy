@@ -19,6 +19,40 @@ function VideoAdminForm({ onUploadFile, onAddUrl }) {
   );
 }
 
+function isYouTubeUrl(u) {
+  return typeof u === 'string' && /youtube\.com|youtu\.be/i.test(u);
+}
+function toYouTubeEmbed(u) {
+  if (!u) return u;
+  if (/youtube\.com\/embed\//.test(u)) return u;
+  const m1 = u.match(/youtu\.be\/([\w-]+)/);
+  if (m1) return `https://www.youtube.com/embed/${m1[1]}`;
+  const m2 = u.match(/[?&]v=([\w-]+)/);
+  if (m2) return `https://www.youtube.com/embed/${m2[1]}`;
+  return u;
+}
+
+function DefaultVideoRow({ video, onSave, onDelete }) {
+  const [v, setV] = React.useState(video);
+  React.useEffect(() => setV(video), [video]);
+  const dirty = JSON.stringify(v) !== JSON.stringify(video);
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 space-y-1">
+      <div className="flex gap-2">
+        <input value={v.title} onChange={(e)=>setV({...v, title:e.target.value})} className="flex-1 bg-slate-950 border border-slate-800 px-2 py-1 rounded text-xs text-slate-100" />
+        <input value={v.topic} onChange={(e)=>setV({...v, topic:e.target.value})} className="w-24 bg-slate-950 border border-slate-800 px-2 py-1 rounded text-xs text-slate-100" />
+      </div>
+      <div className="flex gap-2">
+        <input value={v.url} onChange={(e)=>setV({...v, url:e.target.value})} placeholder="URL (YouTube/mp4)" className="flex-1 bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[11px] text-slate-100" />
+        <input value={v.thumb||''} onChange={(e)=>setV({...v, thumb:e.target.value})} className="w-12 bg-slate-950 border border-slate-800 px-2 py-1 rounded text-xs text-slate-100" />
+        <input value={v.duration||''} onChange={(e)=>setV({...v, duration:e.target.value})} className="w-16 bg-slate-950 border border-slate-800 px-2 py-1 rounded text-[11px] text-slate-100" />
+        <button disabled={!dirty} onClick={()=>onSave(v)} className={`px-2 py-1 rounded text-[11px] font-bold ${dirty?'bg-teal-500 text-slate-950':'bg-slate-800 text-slate-500'}`}>💾</button>
+        <button onClick={()=>onDelete(v.id)} className="px-2 py-1 rounded text-[11px] font-bold bg-rose-500/20 text-rose-400">✕</button>
+      </div>
+    </div>
+  );
+}
+
 // ==========================================================
 // ĐẠI THƯ VIỆN 90 CÂU HỎI TRẮC NGHIỆM CHUYÊN SÂU BIONOVA LEGACY
 // ==========================================================
@@ -220,6 +254,7 @@ export default function App() {
     pdf_url: '',
     pdf_name: 'Tai_lieu.pdf',
     videos: [],
+    default_videos: [],
     admin_password: 'bionova2026',
   });
   const [adminMsg, setAdminMsg] = useState('');
@@ -236,6 +271,7 @@ export default function App() {
         pdf_url: data.pdf_url || '',
         pdf_name: data.pdf_name || 'Tai_lieu.pdf',
         videos: Array.isArray(data.videos) ? data.videos : [],
+        default_videos: Array.isArray(data.default_videos) ? data.default_videos : [],
         admin_password: data.admin_password || 'bionova2026',
       });
     }
@@ -537,6 +573,32 @@ export default function App() {
     } catch (err) { setAdminMsg('❌ Lỗi: ' + err.message); }
   };
 
+  // Lưu chỉnh sửa 1 trong 15 video mặc định
+  const handleSaveDefaultVideo = async (video) => {
+    const list = (appSettings.default_videos || []).map(v => v.id === video.id ? video : v);
+    await supabase.from('app_settings').update({ default_videos: list, updated_at: new Date().toISOString() }).eq('id', 1);
+    await loadSettings();
+    setAdminMsg('✅ Đã lưu video: ' + video.title);
+  };
+  const handleDeleteDefaultVideo = async (id) => {
+    if (!window.confirm('Xóa video mặc định này?')) return;
+    const list = (appSettings.default_videos || []).filter(v => v.id !== id);
+    await supabase.from('app_settings').update({ default_videos: list, updated_at: new Date().toISOString() }).eq('id', 1);
+    await loadSettings();
+  };
+  const handleAddDefaultVideo = async () => {
+    const list = [...(appSettings.default_videos || []), {
+      id: 'd_' + Date.now(),
+      title: 'Video mới',
+      topic: 'Tổng hợp',
+      thumb: '🎬',
+      duration: '—',
+      url: 'https://www.youtube.com/embed/'
+    }];
+    await supabase.from('app_settings').update({ default_videos: list, updated_at: new Date().toISOString() }).eq('id', 1);
+    await loadSettings();
+  };
+
   const handleNextQuestion = () => {
     if (quizIndex < QUIZ_QUESTIONS.length - 1) {
       setQuizIndex(prev => prev + 1);
@@ -571,26 +633,18 @@ export default function App() {
         ? `Bạn là BIOSEA AI — trợ lý cao cấp của hệ thống BIONOVA LEGACY, đang giao tiếp với QUẢN TRỊ VIÊN (admin) "${currentUser?.real_name || currentUser?.username}". Hãy trả lời với giọng điệu trang trọng, chuyên nghiệp như một cố vấn kỹ thuật: cung cấp thống kê, gợi ý quản trị hệ thống, tư vấn cấu hình, đề xuất nội dung học liệu. Xưng "Báo cáo Quản trị viên" và gọi họ là "Sếp" hoặc "Admin". Khi được hỏi về sinh học, vẫn trả lời chính xác nhưng kèm góc nhìn quản trị nội dung.`
         : `Bạn là BIOSEA AI — trợ lý học tập thân thiện của hệ thống BIONOVA LEGACY, đang giúp học viên "${currentUser?.real_name || currentUser?.username}" (danh hiệu: ${currentUser?.title}). Trả lời các câu hỏi về Chu kì tế bào, Nguyên phân, Giảm phân bằng tiếng Việt, ngắn gọn, dùng emoji 🧬🧫🔬 và giảng dạy như một gia sư sinh học cấp 3.`;
 
-      const contents = newHistory.slice(-12).map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.text }],
+      const chatMessages = newHistory.slice(-12).map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.text,
       }));
-
-      const apiKey = 'AIzaSyCeQFD3ljKmx9C5oTWq0nEyClnLi6WNzmw';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
-        }),
+        body: JSON.stringify({ system: systemPrompt, messages: chatMessages }),
       });
       const data = await res.json();
-      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text
-        || data?.error?.message
-        || '⚠️ Không nhận được phản hồi từ AI.';
+      const reply = data?.reply
+        || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không nhận được phản hồi từ AI.');
       setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
       setIsAiLoading(false);
     } catch (error) {
@@ -603,8 +657,11 @@ export default function App() {
   const sortedLeaderboard = useMemo(() => [...leaderboard].sort((a, b) => b.score - a.score), [leaderboard]);
   const allVideos = useMemo(() => {
     const admin = (appSettings.videos || []).map(v => ({ topic: 'Admin', thumb: '🎬', duration: '—', ...v }));
-    return [...admin, ...VIDEOS_LIST];
-  }, [appSettings.videos]);
+    const defaults = (appSettings.default_videos && appSettings.default_videos.length > 0)
+      ? appSettings.default_videos
+      : VIDEOS_LIST;
+    return [...admin, ...defaults];
+  }, [appSettings.videos, appSettings.default_videos]);
   
   const wrapperThemeClass = useMemo(() => {
     if (themeStyle === 'ocean') return 'bg-slate-950 text-sky-100';
@@ -817,7 +874,18 @@ export default function App() {
                         <button onClick={() => setPlayingVideoUrl(null)} className="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded hover:bg-rose-500 hover:text-slate-950 font-bold transition-all">Tắt trình phát</button>
                       </div>
                       <div className="aspect-video bg-black rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
-                        <video src={playingVideoUrl} controls autoPlay className="w-full h-full object-cover"></video>
+                        {isYouTubeUrl(playingVideoUrl) ? (
+                          <iframe
+                            src={toYouTubeEmbed(playingVideoUrl) + (toYouTubeEmbed(playingVideoUrl).includes('?') ? '&' : '?') + 'autoplay=1&rel=0'}
+                            title={playingVideoTitle}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                            className="w-full h-full"
+                            frameBorder="0"
+                          />
+                        ) : (
+                          <video src={playingVideoUrl} controls autoPlay className="w-full h-full object-contain bg-black"></video>
+                        )}
                       </div>
                     </div>
                   )}
@@ -833,8 +901,18 @@ export default function App() {
                         }}
                         className={`bg-slate-950 border rounded-xl overflow-hidden group cursor-pointer hover:border-teal-500/50 transition-all ${playingVideoTitle === video.title ? 'border-teal-400 ring-1 ring-teal-400/30' : 'border-slate-800'}`}
                       >
-                        <div className="aspect-video bg-slate-800 relative flex flex-col items-center justify-center">
-                          <span className="text-3xl opacity-60 group-hover:scale-110 transition-transform duration-300">{video.thumb}</span>
+                        <div className="aspect-video bg-slate-800 relative flex flex-col items-center justify-center overflow-hidden">
+                          {isYouTubeUrl(video.url) ? (
+                            (() => {
+                              const m = toYouTubeEmbed(video.url).match(/embed\/([\w-]+)/);
+                              const id = m?.[1];
+                              return id ? (
+                                <img src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`} alt={video.title} className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition" loading="lazy" />
+                              ) : <span className="text-3xl opacity-60">{video.thumb}</span>;
+                            })()
+                          ) : (
+                            <span className="text-3xl opacity-60 group-hover:scale-110 transition-transform duration-300">{video.thumb}</span>
+                          )}
                           <div className="absolute bottom-1 right-1 bg-black/80 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">{video.duration}</div>
                           <div className="absolute inset-0 bg-teal-500/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                             <div className="w-9 h-9 bg-teal-400 text-slate-950 rounded-full flex items-center justify-center pl-0.5 text-xs font-bold shadow-lg">▶ Xem</div>
@@ -1047,6 +1125,19 @@ export default function App() {
                               <span className="truncate pr-2">🎬 {v.title}</span>
                               <button onClick={() => handleDeleteVideo(v.id)} className="text-rose-400 text-[10px] font-bold">Xóa</button>
                             </div>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-bold text-teal-400">📺 Chỉnh sửa trực tiếp 15 video mặc định ({(appSettings.default_videos||[]).length})</h3>
+                          <button onClick={handleAddDefaultVideo} className="text-[10px] bg-teal-500 text-slate-950 font-bold px-2 py-1 rounded">+ Thêm</button>
+                        </div>
+                        <p className="text-[10px] text-slate-500">Sửa tiêu đề / URL / chủ đề rồi bấm 💾 — thay đổi áp dụng cho TẤT CẢ người dùng.</p>
+                        <div className="space-y-2 max-h-[480px] overflow-y-auto">
+                          {(appSettings.default_videos || []).map(v => (
+                            <DefaultVideoRow key={v.id} video={v} onSave={handleSaveDefaultVideo} onDelete={handleDeleteDefaultVideo} />
                           ))}
                         </div>
                       </section>
