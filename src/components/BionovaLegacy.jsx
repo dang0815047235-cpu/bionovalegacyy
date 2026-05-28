@@ -190,6 +190,11 @@ export default function App() {
   const [usernameInput, setUsernameInput] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [realNameInput, setRealNameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [accountsList, setAccountsList] = useState([]);
 
   // Quản lý trạng thái xem video
   const [playingVideoUrl, setPlayingVideoUrl] = useState(null);
@@ -205,9 +210,7 @@ export default function App() {
   const [quizComplete, setQuizComplete] = useState(false);
 
   const [aiInput, setAiInput] = useState('');
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: '🧬 Xin chào! Mình là BIOSEA AI - trợ lý học tập thông thái của hệ thống BIONOVA LEGACY. Hãy hỏi mình bất cứ điều gì về Chu kì tế bào, Nguyên phân và Giảm phân nhé! 🌿🧪' }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Cấu hình do admin đặt (đồng bộ tất cả thiết bị)
@@ -219,8 +222,6 @@ export default function App() {
     videos: [],
     admin_password: 'bionova2026',
   });
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminPwdInput, setAdminPwdInput] = useState('');
   const [adminMsg, setAdminMsg] = useState('');
   const [uploadingMusic, setUploadingMusic] = useState(false);
   const [uploadingPdf, setUploadingPdf] = useState(false);
@@ -242,13 +243,22 @@ export default function App() {
 
   const loadLeaderboard = async () => {
     const { data } = await supabase
-      .from('leaderboard_entries')
-      .select('username, score, title, badges')
+      .from('accounts')
+      .select('username, real_name, score, title, badges, role')
       .order('score', { ascending: false })
+      .order('updated_at', { ascending: true })
       .limit(100);
     if (data) {
       setLeaderboard(data.map(d => ({ ...d, badges: Array.isArray(d.badges) ? d.badges : [] })));
     }
+  };
+
+  const loadAccounts = async () => {
+    const { data } = await supabase
+      .from('accounts')
+      .select('id, real_name, username, role, score, title, created_at')
+      .order('created_at', { ascending: false });
+    if (data) setAccountsList(data);
   };
 
   // Tải dữ liệu ban đầu
@@ -262,19 +272,40 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, () => loadSettings())
       .subscribe();
     const lbCh = supabase.channel('lb_rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard_entries' }, () => loadLeaderboard())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'accounts' }, () => { loadLeaderboard(); loadAccounts(); })
       .subscribe();
 
     const sessionUser = localStorage.getItem('biotech_current_user');
     if (sessionUser) {
-      setCurrentUser(JSON.parse(sessionUser));
-      setIsLoggedIn(true);
+      try {
+        const u = JSON.parse(sessionUser);
+        setCurrentUser(u);
+        setIsLoggedIn(true);
+      } catch {}
     }
     return () => {
       supabase.removeChannel(settingsCh);
       supabase.removeChannel(lbCh);
     };
   }, []);
+
+  // Tải danh sách tài khoản khi vào tab admin
+  useEffect(() => {
+    if (activeTab === 'admin' && isAdmin) loadAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentUser?.role]);
+
+  // Lời chào AI thay đổi theo role
+  useEffect(() => {
+    if (!currentUser) return;
+    setMessages([{
+      role: 'assistant',
+      text: isAdmin
+        ? `🛡️ Báo cáo Quản trị viên ${currentUser.real_name || currentUser.username}! BIOSEA AI sẵn sàng hỗ trợ điều hành hệ thống BIONOVA LEGACY. Sếp có thể hỏi về thống kê học viên, gợi ý nội dung, hoặc bất kỳ chủ đề sinh học nào. 🧬`
+        : `🧬 Xin chào ${currentUser.real_name || currentUser.username}! Mình là BIOSEA AI — trợ lý học tập của BIONOVA LEGACY. Hỏi mình về Chu kì tế bào, Nguyên phân, Giảm phân nhé! 🌿🧪`,
+    }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role]);
 
   // 🔊 Nhạc nền: phát file do admin upload (mọi user nghe cùng nguồn)
   const toggleBackgroundMusic = async () => {
@@ -310,36 +341,58 @@ export default function App() {
 
   // Đăng ký / Đăng nhập (đồng bộ Supabase)
   const handleAuth = async (e) => {
-    e.preventDefault();
-    if (!usernameInput.trim()) return;
-    const name = usernameInput.trim();
-    const { data: existing } = await supabase
-      .from('leaderboard_entries')
-      .select('username, score, title, badges')
-      .ilike('username', name)
-      .maybeSingle();
+    if (e && e.preventDefault) e.preventDefault();
+    setAuthError('');
+    const uname = usernameInput.trim().toLowerCase();
+    const pwd = passwordInput;
+    const realName = realNameInput.trim();
+    if (!uname || !pwd) { setAuthError('Vui lòng nhập đầy đủ username và mật khẩu'); return; }
 
-    let loggedInUser;
-    if (existing) {
-      loggedInUser = { ...existing, badges: Array.isArray(existing.badges) ? existing.badges : ['🧫'] };
-    } else {
-      loggedInUser = { username: name, score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'] };
-      await supabase.from('leaderboard_entries').insert(loggedInUser);
+    if (authMode === 'register') {
+      if (!realName) { setAuthError('Vui lòng nhập tên thật'); return; }
+      if (pwd.length < 4) { setAuthError('Mật khẩu tối thiểu 4 ký tự'); return; }
+      const { data: existing } = await supabase
+        .from('accounts').select('username').eq('username', uname).maybeSingle();
+      if (existing) { setAuthError('Username này đã tồn tại, vui lòng chọn tên khác hoặc đăng nhập'); return; }
+
+      // Kiểm tra: tài khoản đầu tiên với username 'admin' sẽ là admin
+      let role = 'user';
+      if (uname === 'admin') {
+        const { data: anyAdmin } = await supabase.from('accounts').select('id').eq('role', 'admin').limit(1);
+        if (!anyAdmin || anyAdmin.length === 0) role = 'admin';
+      }
+
+      const newAcc = {
+        real_name: realName, username: uname, password: pwd, role,
+        score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'],
+      };
+      const { data: inserted, error } = await supabase.from('accounts').insert(newAcc).select().single();
+      if (error) { setAuthError('Đăng ký lỗi: ' + error.message); return; }
+      localStorage.setItem('biotech_current_user', JSON.stringify(inserted));
+      setCurrentUser(inserted);
+      setIsLoggedIn(true);
       loadLeaderboard();
+    } else {
+      const { data: acc } = await supabase
+        .from('accounts').select('*').eq('username', uname).maybeSingle();
+      if (!acc) { setAuthError('Tài khoản không tồn tại'); return; }
+      if (acc.password !== pwd) { setAuthError('Sai mật khẩu'); return; }
+      const user = { ...acc, badges: Array.isArray(acc.badges) ? acc.badges : ['🧫'] };
+      localStorage.setItem('biotech_current_user', JSON.stringify(user));
+      setCurrentUser(user);
+      setIsLoggedIn(true);
     }
-    localStorage.setItem('biotech_current_user', JSON.stringify(loggedInUser));
-    setCurrentUser(loggedInUser);
-    setIsLoggedIn(true);
+    setPasswordInput('');
   };
 
   const handleUpdateNickname = async (newName) => {
     if (!newName.trim() || !currentUser) return;
     const name = newName.trim();
-    if (name.toLowerCase() === currentUser.username.toLowerCase()) return;
-    await supabase.from('leaderboard_entries')
-      .update({ username: name })
-      .ilike('username', currentUser.username);
-    const updatedUser = { ...currentUser, username: name };
+    if (name === currentUser.real_name) return;
+    await supabase.from('accounts')
+      .update({ real_name: name, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id);
+    const updatedUser = { ...currentUser, real_name: name };
     setCurrentUser(updatedUser);
     localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
     loadLeaderboard();
@@ -360,9 +413,9 @@ export default function App() {
     const resetUser = { ...currentUser, score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'] };
     setCurrentUser(resetUser);
     localStorage.setItem('biotech_current_user', JSON.stringify(resetUser));
-    await supabase.from('leaderboard_entries')
-      .update({ score: 0, title: resetUser.title, badges: resetUser.badges })
-      .ilike('username', currentUser.username);
+    await supabase.from('accounts')
+      .update({ score: 0, title: resetUser.title, badges: resetUser.badges, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id);
     loadLeaderboard();
     restartQuiz();
   };
@@ -393,11 +446,9 @@ export default function App() {
     setCurrentUser(updatedUser);
     localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
 
-    await supabase.from('leaderboard_entries')
-      .upsert(
-        { username: updatedUser.username, score: maxScore, title: newTitle, badges: updatedBadges },
-        { onConflict: 'username' }
-      );
+    await supabase.from('accounts')
+      .update({ score: maxScore, title: newTitle, badges: updatedBadges, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id);
     loadLeaderboard();
   };
 
@@ -415,14 +466,17 @@ export default function App() {
   };
 
   // =================== ADMIN FUNCTIONS ===================
-  const handleAdminLogin = (e) => {
-    e.preventDefault();
-    if (adminPwdInput === appSettings.admin_password) {
-      setIsAdmin(true);
-      setAdminMsg('✅ Đăng nhập admin thành công');
-    } else {
-      setAdminMsg('❌ Sai mật khẩu admin');
-    }
+  const isAdmin = currentUser?.role === 'admin';
+
+  const handleDeleteAccount = async (accId, accUsername) => {
+    if (!isAdmin) return;
+    if (accId === currentUser?.id) { alert('Không thể xoá chính mình'); return; }
+    if (!window.confirm(`Xoá học viên "${accUsername}"? Hành động này không thể hoàn tác.`)) return;
+    const { error } = await supabase.from('accounts').delete().eq('id', accId);
+    if (error) { alert('Lỗi: ' + error.message); return; }
+    loadAccounts();
+    loadLeaderboard();
+    setAdminMsg(`🗑️ Đã xoá học viên ${accUsername}`);
   };
 
   const uploadToStorage = async (file, prefix) => {
@@ -507,18 +561,40 @@ export default function App() {
     if (!aiInput.trim() || isAiLoading) return;
     
     const userText = aiInput.trim();
-    setMessages(prev => [...prev, { role: 'user', text: userText }]);
+    const newHistory = [...messages, { role: 'user', text: userText }];
+    setMessages(newHistory);
     setAiInput('');
     setIsAiLoading(true);
 
     try {
-      // Đã bảo mật API Key cũ và xử lý gọi proxy/mock an toàn cho Client-side
-      setTimeout(() => {
-        let responseMock = `🧬 Trợ lý BIOSEA AI nhận định câu hỏi của bạn rất hay! Về cơ chế phân bào, bạn cần chú ý các mốc:\n- Kì giữa: NST đóng xoắn cực đại xếp 1 hàng (Nguyên phân) hoặc 2 hàng (Giảm phân I).\n- Cấu trúc Checkpoint G1 ngăn lỗi sao chép hiệu quả. 🧪`;
-        setMessages(prev => [...prev, { role: 'assistant', text: responseMock }]);
-        setIsAiLoading(false);
-      }, 1000);
+      const systemPrompt = isAdmin
+        ? `Bạn là BIOSEA AI — trợ lý cao cấp của hệ thống BIONOVA LEGACY, đang giao tiếp với QUẢN TRỊ VIÊN (admin) "${currentUser?.real_name || currentUser?.username}". Hãy trả lời với giọng điệu trang trọng, chuyên nghiệp như một cố vấn kỹ thuật: cung cấp thống kê, gợi ý quản trị hệ thống, tư vấn cấu hình, đề xuất nội dung học liệu. Xưng "Báo cáo Quản trị viên" và gọi họ là "Sếp" hoặc "Admin". Khi được hỏi về sinh học, vẫn trả lời chính xác nhưng kèm góc nhìn quản trị nội dung.`
+        : `Bạn là BIOSEA AI — trợ lý học tập thân thiện của hệ thống BIONOVA LEGACY, đang giúp học viên "${currentUser?.real_name || currentUser?.username}" (danh hiệu: ${currentUser?.title}). Trả lời các câu hỏi về Chu kì tế bào, Nguyên phân, Giảm phân bằng tiếng Việt, ngắn gọn, dùng emoji 🧬🧫🔬 và giảng dạy như một gia sư sinh học cấp 3.`;
+
+      const contents = newHistory.slice(-12).map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.text }],
+      }));
+
+      const apiKey = 'AIzaSyCeQFD3ljKmx9C5oTWq0nEyClnLi6WNzmw';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+        }),
+      });
+      const data = await res.json();
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text
+        || data?.error?.message
+        || '⚠️ Không nhận được phản hồi từ AI.';
+      setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+      setIsAiLoading(false);
     } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Lỗi kết nối AI: ' + error.message }]);
       setIsAiLoading(false);
     }
   };
@@ -554,32 +630,43 @@ export default function App() {
           <div>
             <h2 className="text-2xl font-black text-slate-100 tracking-tight">BIONOVA LEGACY</h2>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-              Chào mừng bạn đến với hệ thống khảo sát phân bào sinh học. Vui lòng khởi tạo biệt danh học viên để mở khóa toàn bộ tài nguyên trên trang web.
+              {authMode === 'register'
+                ? 'Tạo tài khoản học viên mới. Tài khoản đầu tiên với username "admin" sẽ trở thành Quản trị viên.'
+                : 'Đăng nhập bằng tài khoản học viên đã đăng ký để vào hệ thống.'}
             </p>
           </div>
-          <form onSubmit={handleAuth} action="#" method="post" className="space-y-4">
-            <div className="space-y-1 text-left">
-              <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Tên học viên / Biệt danh</label>
-              <input 
-                type="text" 
-                required
-                value={usernameInput} 
-                onChange={(e) => setUsernameInput(e.target.value)} 
-                placeholder="Ví dụ: Bẹp..." 
-                maxLength={14} 
-                className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-3 rounded-xl text-sm font-bold text-center text-slate-100 transition-all focus:outline-none placeholder-slate-600" 
-              />
+          <div className="flex gap-2 bg-slate-950 rounded-xl p-1">
+            <button onClick={() => { setAuthMode('login'); setAuthError(''); }}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold ${authMode==='login'?'bg-teal-500 text-slate-950':'text-slate-400'}`}>Đăng nhập</button>
+            <button onClick={() => { setAuthMode('register'); setAuthError(''); }}
+              className={`flex-1 py-2 rounded-lg text-xs font-bold ${authMode==='register'?'bg-indigo-500 text-white':'text-slate-400'}`}>Đăng ký</button>
+          </div>
+          <form onSubmit={handleAuth} action="#" method="post" className="space-y-3 text-left">
+            {authMode === 'register' && (
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Tên thật</label>
+                <input type="text" value={realNameInput} onChange={(e)=>setRealNameInput(e.target.value)} maxLength={40} placeholder="VD: Nguyễn Văn A"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+              </div>
+            )}
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Username</label>
+              <input type="text" value={usernameInput} onChange={(e)=>setUsernameInput(e.target.value)} maxLength={20} placeholder="username (không dấu)"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
             </div>
-            <button
-              type="button"
-              onClick={(e) => handleAuth(e)}
-              className="w-full bg-gradient-to-r from-teal-400 to-indigo-500 hover:from-teal-300 hover:to-indigo-400 text-slate-950 font-black text-xs uppercase tracking-wider py-3.5 rounded-xl shadow-lg transition-all transform active:scale-98"
-            >
-              Kích Hoạt Tài Khoản & Vào Hệ Thống
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Mật khẩu</label>
+              <input type="password" value={passwordInput} onChange={(e)=>setPasswordInput(e.target.value)} placeholder="••••••"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+            </div>
+            {authError && <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 p-2 rounded-lg">{authError}</div>}
+            <button type="button" onClick={(e)=>handleAuth(e)}
+              className="w-full bg-gradient-to-r from-teal-400 to-indigo-500 hover:from-teal-300 hover:to-indigo-400 text-slate-950 font-black text-xs uppercase tracking-wider py-3 rounded-xl shadow-lg">
+              {authMode==='register'?'Tạo Tài Khoản & Vào Hệ Thống':'Đăng Nhập'}
             </button>
           </form>
           <div className="text-[10px] text-slate-500 font-medium pt-2">
-            Hệ thống tự động đồng bộ huy hiệu & danh hiệu vào bộ nhớ cục bộ.
+            Hệ thống đồng bộ điểm và bảng xếp hạng theo thời gian thực.
           </div>
         </div>
       </div>
@@ -609,10 +696,10 @@ export default function App() {
           </button>
           <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl">
             <div className="text-right">
-              <p className="text-xs font-bold text-teal-400">{currentUser?.username}</p>
+              <p className="text-xs font-bold text-teal-400">{currentUser?.real_name || currentUser?.username} {isAdmin && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 rounded ml-1">ADMIN</span>}</p>
               <p className="text-[10px] text-amber-400 font-bold">🎖️ {currentUser?.title}</p>
             </div>
-            <button onClick={handleLogout} className="text-[10px] bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-slate-950 px-2 py-1 rounded font-bold transition-all">Đổi nick</button>
+            <button onClick={handleLogout} className="text-[10px] bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-slate-950 px-2 py-1 rounded font-bold transition-all">Đăng xuất</button>
           </div>
         </div>
       </header>
@@ -842,7 +929,9 @@ export default function App() {
                             <tr key={index} className={`hover:bg-slate-800/30 ${user.username === currentUser?.username ? 'bg-indigo-500/5' : ''}`}>
                               <td className="py-3 font-mono font-bold text-slate-400">#{index + 1}</td>
                               <td className="py-3 font-bold text-slate-200">
-                                {user.username} {user.username === currentUser?.username && <span className="text-[9px] bg-teal-500 text-slate-950 font-extrabold px-1 rounded ml-1">BẠN</span>}
+                                {user.real_name || user.username} <span className="text-[9px] text-slate-500">@{user.username}</span>
+                                {user.role === 'admin' && <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1 rounded ml-1">ADMIN</span>}
+                                {user.username === currentUser?.username && <span className="text-[9px] bg-teal-500 text-slate-950 font-extrabold px-1 rounded ml-1">BẠN</span>}
                               </td>
                               <td className="py-3 text-amber-400 font-bold">{user.title}</td>
                               <td className="py-3 text-sm tracking-wide">{user.badges?.join(' ')}</td>
@@ -862,7 +951,8 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                       <h3 className="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2">👤 Quản Lý Định Danh</h3>
-                      <input type="text" defaultValue={currentUser?.username} onBlur={(e) => handleUpdateNickname(e.target.value)} placeholder="Sửa biệt danh hiển thị..." className="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400" />
+                      <input type="text" defaultValue={currentUser?.real_name} onBlur={(e) => handleUpdateNickname(e.target.value)} placeholder="Sửa tên hiển thị..." className="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400" />
+                      <p className="text-[10px] text-slate-500">Username: @{currentUser?.username} (không đổi được)</p>
                       <button onClick={handleResetData} className="w-full text-left p-2.5 rounded-xl text-xs bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold hover:bg-rose-500/20 transition-all">🔄 Reset toàn bộ điểm số & huy hiệu</button>
                     </div>
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
@@ -929,12 +1019,9 @@ export default function App() {
                     <p className="text-xs text-slate-400 mt-1">Cấu hình nhạc nền, video, PDF dùng chung cho TẤT CẢ người dùng.</p>
                   </div>
                   {!isAdmin ? (
-                    <form onSubmit={handleAdminLogin} className="space-y-3 max-w-sm">
-                      <label className="text-[10px] font-bold uppercase text-slate-400">Mật khẩu admin (mặc định: bionova2026)</label>
-                      <input type="password" value={adminPwdInput} onChange={(e) => setAdminPwdInput(e.target.value)} className="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-sm text-slate-100" />
-                      <button type="submit" className="w-full bg-amber-500 text-slate-950 font-bold py-2 rounded-xl text-xs">Đăng nhập Admin</button>
-                      {adminMsg && <p className="text-xs text-slate-400">{adminMsg}</p>}
-                    </form>
+                    <div className="p-4 bg-slate-950 border border-rose-500/30 rounded-xl text-xs text-rose-400">
+                      🚫 Bạn không có quyền Admin. Chỉ tài khoản đăng ký đầu tiên với username "admin" mới có quyền truy cập khu vực này.
+                    </div>
                   ) : (
                     <div className="space-y-5">
                       {adminMsg && <div className="text-xs p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300">{adminMsg}</div>}
@@ -959,6 +1046,25 @@ export default function App() {
                             <div key={v.id} className="flex items-center justify-between text-xs bg-slate-900 border border-slate-800 rounded-lg p-2">
                               <span className="truncate pr-2">🎬 {v.title}</span>
                               <button onClick={() => handleDeleteVideo(v.id)} className="text-rose-400 text-[10px] font-bold">Xóa</button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <h3 className="text-sm font-bold text-amber-400">👥 Quản lý học viên ({accountsList.length})</h3>
+                        <div className="space-y-1 max-h-80 overflow-y-auto">
+                          {accountsList.map(acc => (
+                            <div key={acc.id} className="flex items-center justify-between text-xs bg-slate-900 border border-slate-800 rounded-lg p-2">
+                              <div className="truncate pr-2">
+                                <span className="font-bold text-slate-200">{acc.real_name}</span>
+                                <span className="text-slate-500"> @{acc.username}</span>
+                                {acc.role === 'admin' && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 rounded ml-1 font-bold">ADMIN</span>}
+                                <div className="text-[10px] text-slate-500">Điểm: {acc.score} · {acc.title}</div>
+                              </div>
+                              {acc.id !== currentUser?.id && (
+                                <button onClick={() => handleDeleteAccount(acc.id, acc.username)} className="text-rose-400 text-[10px] font-bold bg-rose-500/10 px-2 py-1 rounded hover:bg-rose-500 hover:text-slate-950">Xóa</button>
+                              )}
                             </div>
                           ))}
                         </div>
