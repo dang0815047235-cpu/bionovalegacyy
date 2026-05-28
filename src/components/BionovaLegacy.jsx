@@ -1,4 +1,23 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+
+function VideoAdminForm({ onUploadFile, onAddUrl }) {
+  const [title, setTitle] = React.useState('');
+  const [url, setUrl] = React.useState('');
+  return (
+    <div className="space-y-2">
+      <input value={title} onChange={(e)=>setTitle(e.target.value)} placeholder="Tiêu đề video" className="w-full bg-slate-900 border border-slate-800 px-2 py-1.5 rounded text-xs text-slate-100" />
+      <div className="flex gap-2">
+        <input value={url} onChange={(e)=>setUrl(e.target.value)} placeholder="Dán URL video (mp4/youtube embed)" className="flex-1 bg-slate-900 border border-slate-800 px-2 py-1.5 rounded text-xs text-slate-100" />
+        <button onClick={()=>{ if(title && url){ onAddUrl({title, url, thumb:'🎬', duration:'—', topic:'Admin'}); setTitle(''); setUrl(''); }}} className="px-3 py-1.5 bg-teal-500 text-slate-950 rounded text-xs font-bold">+ URL</button>
+      </div>
+      <label className="block">
+        <span className="text-[10px] text-slate-400">Hoặc upload file video:</span>
+        <input type="file" accept="video/*" onChange={(e)=>onUploadFile(e,{title: title || (e.target.files?.[0]?.name||'Video mới'), topic:'Admin'})} className="text-xs text-slate-300 block mt-1" />
+      </label>
+    </div>
+  );
+}
 
 // ==========================================================
 // ĐẠI THƯ VIỆN 90 CÂU HỎI TRẮC NGHIỆM CHUYÊN SÂU BIONOVA LEGACY
@@ -161,8 +180,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('concepts');
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [bgVolume, setBgVolume] = useState(25); 
-  const audioCtxRef = useRef(null);
-  const musicIntervalRef = useRef(null);
+  const audioElRef = useRef(null);
 
   const [themeStyle, setThemeStyle] = useState('slate'); 
   const [enableAnimation, setEnableAnimation] = useState(true);
@@ -192,142 +210,139 @@ export default function App() {
   ]);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // Tải dữ liệu ban đầu từ localStorage - Xóa hoàn toàn bảng xếp hạng ảo cũ
+  // Cấu hình do admin đặt (đồng bộ tất cả thiết bị)
+  const [appSettings, setAppSettings] = useState({
+    music_url: '',
+    music_title: 'Nhạc nền hệ thống',
+    pdf_url: '',
+    pdf_name: 'Tai_lieu.pdf',
+    videos: [],
+    admin_password: 'bionova2026',
+  });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminPwdInput, setAdminPwdInput] = useState('');
+  const [adminMsg, setAdminMsg] = useState('');
+  const [uploadingMusic, setUploadingMusic] = useState(false);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+
+  // Hàm load settings từ Supabase
+  const loadSettings = async () => {
+    const { data } = await supabase.from('app_settings').select('*').eq('id', 1).maybeSingle();
+    if (data) {
+      setAppSettings({
+        music_url: data.music_url || '',
+        music_title: data.music_title || 'Nhạc nền hệ thống',
+        pdf_url: data.pdf_url || '',
+        pdf_name: data.pdf_name || 'Tai_lieu.pdf',
+        videos: Array.isArray(data.videos) ? data.videos : [],
+        admin_password: data.admin_password || 'bionova2026',
+      });
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    const { data } = await supabase
+      .from('leaderboard_entries')
+      .select('username, score, title, badges')
+      .order('score', { ascending: false })
+      .limit(100);
+    if (data) {
+      setLeaderboard(data.map(d => ({ ...d, badges: Array.isArray(d.badges) ? d.badges : [] })));
+    }
+  };
+
+  // Tải dữ liệu ban đầu
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    const storedLeaderboard = localStorage.getItem('biotech_leaderboard');
-    if (storedLeaderboard) {
-      setLeaderboard(JSON.parse(storedLeaderboard));
-    } else {
-      localStorage.setItem('biotech_leaderboard', JSON.stringify([]));
-      setLeaderboard([]);
-    }
+    loadSettings();
+    loadLeaderboard();
+
+    // Realtime: tự cập nhật khi admin đổi nhạc/video/PDF
+    const settingsCh = supabase.channel('app_settings_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, () => loadSettings())
+      .subscribe();
+    const lbCh = supabase.channel('lb_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard_entries' }, () => loadLeaderboard())
+      .subscribe();
+
     const sessionUser = localStorage.getItem('biotech_current_user');
     if (sessionUser) {
       setCurrentUser(JSON.parse(sessionUser));
       setIsLoggedIn(true);
     }
     return () => {
-      if (musicIntervalRef.current) clearInterval(musicIntervalRef.current);
+      supabase.removeChannel(settingsCh);
+      supabase.removeChannel(lbCh);
     };
   }, []);
 
-  // 🔊 THUẬT TOÁN ĐỔI NHẠC NỀN THÀNH BÀI "HOMESICK ALIEN" (RADIOHEAD STYLE)
-  const playHomesickAlienTone = (freq, duration, currentVol, type = 'sine') => {
-    if (!audioCtxRef.current || audioCtxRef.current.state === 'suspended') return;
-    try {
-      const ctx = audioCtxRef.current;
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      osc.type = type; 
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      
-      // Tạo hiệu ứng lơ lửng không gian (Vibrato) đặc trưng của Homesick Alien
-      if (type === 'sine') {
-        const vibrato = ctx.createOscillator();
-        const vibratoGain = ctx.createGain();
-        vibrato.frequency.value = 4.5; // Tần số rung lơ lửng
-        vibratoGain.gain.value = 3;    // Độ sâu của tiếng ngân arpeggio
-        vibrato.connect(vibratoGain);
-        vibratoGain.connect(osc.frequency);
-        vibrato.start();
-      }
-
-      const now = ctx.currentTime;
-      gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime((currentVol / 100) * 0.12, now + 0.6);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + duration);
-    } catch(e) {
-      console.log(e);
+  // 🔊 Nhạc nền: phát file do admin upload (mọi user nghe cùng nguồn)
+  const toggleBackgroundMusic = async () => {
+    if (!appSettings.music_url) {
+      alert('Admin chưa thiết lập nhạc nền. Vào tab ⚙️ Admin để tải lên.');
+      return;
     }
-  };
-
-  const toggleBackgroundMusic = () => {
-    if (!isPlayingAudio) {
-      if (!audioCtxRef.current) {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioCtxRef.current = new AudioContext();
-      }
-      if (audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume();
-      }
-
-      setIsPlayingAudio(true);
-      // Vòng lặp hợp âm chính của Homesick Alien (Hợp âm rải không gian sầu muộn)
-      const homesickMelody = [
-        293.66, 349.23, 440.00, 523.25, // Dm7 rải lơ lửng
-        293.66, 392.00, 440.00, 587.33, // G7 rải không gian
-        329.63, 392.00, 493.88, 659.25, // Cmaj7 xa xăm
-        349.23, 440.00, 523.25, 698.46  // Fmaj7 cô độc
-      ];
-      let step = 0;
-
-      musicIntervalRef.current = setInterval(() => {
-        const freq = homesickMelody[step % homesickMelody.length];
-        // Tiếng guitar rải không gian (Sine ngân mềm)
-        playHomesickAlienTone(freq, 2.5, bgVolume, 'sine');
-        
-        // Tạo âm bè bass trầm lắng ở đầu mỗi ô nhịp
-        if (step % 4 === 0) {
-          playHomesickAlienTone(freq / 2, 3.5, bgVolume * 0.7, 'triangle');
-        }
-        step++;
-      }, 1500);
-
-      // Thêm huy hiệu nghe nhạc nền
-      if (currentUser) {
-        let updatedBadges = [...currentUser.badges];
-        if (!updatedBadges.includes('📡')) {
-          updatedBadges.push('📡');
+    if (!audioElRef.current) return;
+    if (isPlayingAudio) {
+      audioElRef.current.pause();
+      setIsPlayingAudio(false);
+    } else {
+      try {
+        audioElRef.current.volume = bgVolume / 100;
+        await audioElRef.current.play();
+        setIsPlayingAudio(true);
+        if (currentUser && !currentUser.badges.includes('📡')) {
+          const updatedBadges = [...currentUser.badges, '📡'];
           const updatedUser = { ...currentUser, badges: updatedBadges };
           setCurrentUser(updatedUser);
           localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
         }
+      } catch (e) {
+        alert('Không phát được nhạc: ' + e.message);
       }
-    } else {
-      if (musicIntervalRef.current) {
-        clearInterval(musicIntervalRef.current);
-        musicIntervalRef.current = null;
-      }
-      setIsPlayingAudio(false);
     }
   };
 
-  // Logic xử lý Đăng ký / Đăng nhập ép buộc ngay từ đầu
-  const handleAuth = (e) => {
+  // Cập nhật âm lượng khi slider thay đổi
+  useEffect(() => {
+    if (audioElRef.current) audioElRef.current.volume = bgVolume / 100;
+  }, [bgVolume]);
+
+  // Đăng ký / Đăng nhập (đồng bộ Supabase)
+  const handleAuth = async (e) => {
     e.preventDefault();
     if (!usernameInput.trim()) return;
     const name = usernameInput.trim();
-    let userList = JSON.parse(localStorage.getItem('biotech_leaderboard')) || [];
-    let userExist = userList.find(u => u.username.toLowerCase() === name.toLowerCase());
+    const { data: existing } = await supabase
+      .from('leaderboard_entries')
+      .select('username, score, title, badges')
+      .ilike('username', name)
+      .maybeSingle();
 
-    let loggedInUser = userExist || { username: name, score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'] };
-    if (!userExist) {
-      userList.push(loggedInUser);
-      localStorage.setItem('biotech_leaderboard', JSON.stringify(userList));
-      setLeaderboard(userList);
+    let loggedInUser;
+    if (existing) {
+      loggedInUser = { ...existing, badges: Array.isArray(existing.badges) ? existing.badges : ['🧫'] };
+    } else {
+      loggedInUser = { username: name, score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'] };
+      await supabase.from('leaderboard_entries').insert(loggedInUser);
+      loadLeaderboard();
     }
-    
     localStorage.setItem('biotech_current_user', JSON.stringify(loggedInUser));
     setCurrentUser(loggedInUser);
     setIsLoggedIn(true);
   };
 
-  const handleUpdateNickname = (newName) => {
+  const handleUpdateNickname = async (newName) => {
     if (!newName.trim() || !currentUser) return;
     const name = newName.trim();
-    let userList = leaderboard.map(u => u.username.toLowerCase() === currentUser.username.toLowerCase() ? { ...u, username: name } : u);
+    if (name.toLowerCase() === currentUser.username.toLowerCase()) return;
+    await supabase.from('leaderboard_entries')
+      .update({ username: name })
+      .ilike('username', currentUser.username);
     const updatedUser = { ...currentUser, username: name };
     setCurrentUser(updatedUser);
-    setLeaderboard(userList);
     localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
-    localStorage.setItem('biotech_leaderboard', JSON.stringify(userList));
+    loadLeaderboard();
   };
 
   const handleLogout = () => {
@@ -335,26 +350,24 @@ export default function App() {
     setCurrentUser(null);
     setIsLoggedIn(false);
     setUsernameInput('');
-    if (musicIntervalRef.current) {
-      clearInterval(musicIntervalRef.current);
-      musicIntervalRef.current = null;
-    }
+    if (audioElRef.current) audioElRef.current.pause();
     setIsPlayingAudio(false);
   };
 
-  const handleResetData = () => {
+  const handleResetData = async () => {
     if (!window.confirm("Bạn có chắc chắn muốn đặt lại toàn bộ tiến trình học tập của mình không?")) return;
     if (!currentUser) return;
     const resetUser = { ...currentUser, score: 0, title: GET_TITLE_BY_SCORE(0), badges: ['🧫'] };
     setCurrentUser(resetUser);
     localStorage.setItem('biotech_current_user', JSON.stringify(resetUser));
-    let userList = leaderboard.map(u => u.username.toLowerCase() === currentUser.username.toLowerCase() ? resetUser : u);
-    setLeaderboard(userList);
-    localStorage.setItem('biotech_leaderboard', JSON.stringify(userList));
+    await supabase.from('leaderboard_entries')
+      .update({ score: 0, title: resetUser.title, badges: resetUser.badges })
+      .ilike('username', currentUser.username);
+    loadLeaderboard();
     restartQuiz();
   };
 
-  const updateGlobalStats = (finalScore) => {
+  const updateGlobalStats = async (finalScore) => {
     if (!currentUser) return;
     let updatedBadges = ['🧫']; // Đảm bảo luôn giữ badge đầu tiên
     
@@ -380,27 +393,12 @@ export default function App() {
     setCurrentUser(updatedUser);
     localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
 
-    let currentLeaderboard = JSON.parse(localStorage.getItem('biotech_leaderboard')) || [];
-    // Loại bỏ hoàn toàn tài khoản ảo, chỉ cập nhật tài khoản thật
-    const existIdx = currentLeaderboard.findIndex(u => u.username.toLowerCase() === currentUser.username.toLowerCase());
-    if (existIdx !== -1) {
-      currentLeaderboard[existIdx] = updatedUser;
-    } else {
-      currentLeaderboard.push(updatedUser);
-    }
-    
-    currentLeaderboard.sort((a, b) => b.score - a.score);
-    
-    // Cấp huy hiệu Top 1 nếu đứng đầu
-    currentLeaderboard = currentLeaderboard.map((u, idx) => {
-      if (idx === 0 && !u.badges.includes('🎓')) {
-        u.badges.push('🎓');
-      }
-      return u;
-    });
-
-    localStorage.setItem('biotech_leaderboard', JSON.stringify(currentLeaderboard));
-    setLeaderboard(currentLeaderboard);
+    await supabase.from('leaderboard_entries')
+      .upsert(
+        { username: updatedUser.username, score: maxScore, title: newTitle, badges: updatedBadges },
+        { onConflict: 'username' }
+      );
+    loadLeaderboard();
   };
 
   const handleOptionSelect = (option) => {
@@ -414,6 +412,75 @@ export default function App() {
         return nextScore;
       });
     }
+  };
+
+  // =================== ADMIN FUNCTIONS ===================
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (adminPwdInput === appSettings.admin_password) {
+      setIsAdmin(true);
+      setAdminMsg('✅ Đăng nhập admin thành công');
+    } else {
+      setAdminMsg('❌ Sai mật khẩu admin');
+    }
+  };
+
+  const uploadToStorage = async (file, prefix) => {
+    const ext = file.name.split('.').pop();
+    const path = `${prefix}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const { error } = await supabase.storage.from('media').upload(path, file, { upsert: false, contentType: file.type });
+    if (error) throw error;
+    const { data } = supabase.storage.from('media').getPublicUrl(path);
+    return data.publicUrl;
+  };
+
+  const handleUploadMusic = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMusic(true); setAdminMsg('⏳ Đang tải nhạc lên...');
+    try {
+      const url = await uploadToStorage(file, 'music');
+      await supabase.from('app_settings').update({ music_url: url, music_title: file.name, updated_at: new Date().toISOString() }).eq('id', 1);
+      await loadSettings();
+      setAdminMsg('✅ Nhạc nền đã cập nhật cho tất cả người dùng');
+    } catch (err) { setAdminMsg('❌ Lỗi: ' + err.message); }
+    setUploadingMusic(false);
+  };
+
+  const handleUploadPdf = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPdf(true); setAdminMsg('⏳ Đang tải PDF lên...');
+    try {
+      const url = await uploadToStorage(file, 'pdf');
+      await supabase.from('app_settings').update({ pdf_url: url, pdf_name: file.name, updated_at: new Date().toISOString() }).eq('id', 1);
+      await loadSettings();
+      setAdminMsg('✅ PDF đã cập nhật cho tất cả người dùng');
+    } catch (err) { setAdminMsg('❌ Lỗi: ' + err.message); }
+    setUploadingPdf(false);
+  };
+
+  const handleAddVideo = async (video) => {
+    const next = [...(appSettings.videos || []), { ...video, id: 'v_' + Date.now() }];
+    await supabase.from('app_settings').update({ videos: next, updated_at: new Date().toISOString() }).eq('id', 1);
+    await loadSettings();
+    setAdminMsg('✅ Đã thêm video');
+  };
+
+  const handleDeleteVideo = async (id) => {
+    const next = (appSettings.videos || []).filter(v => v.id !== id);
+    await supabase.from('app_settings').update({ videos: next, updated_at: new Date().toISOString() }).eq('id', 1);
+    await loadSettings();
+  };
+
+  const handleUploadVideoFile = async (e, meta) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAdminMsg('⏳ Đang tải video lên...');
+    try {
+      const url = await uploadToStorage(file, 'video');
+      await handleAddVideo({ ...meta, url, thumb: '🎬', duration: '—' });
+    } catch (err) { setAdminMsg('❌ Lỗi: ' + err.message); }
   };
 
   const handleNextQuestion = () => {
@@ -458,6 +525,10 @@ export default function App() {
 
   const progressPercent = useMemo(() => Math.round(((quizIndex + 1) / QUIZ_QUESTIONS.length) * 100), [quizIndex]);
   const sortedLeaderboard = useMemo(() => [...leaderboard].sort((a, b) => b.score - a.score), [leaderboard]);
+  const allVideos = useMemo(() => {
+    const admin = (appSettings.videos || []).map(v => ({ topic: 'Admin', thumb: '🎬', duration: '—', ...v }));
+    return [...admin, ...VIDEOS_LIST];
+  }, [appSettings.videos]);
   
   const wrapperThemeClass = useMemo(() => {
     if (themeStyle === 'ocean') return 'bg-slate-950 text-sky-100';
@@ -518,6 +589,8 @@ export default function App() {
   // GIAO DIỆN CHÍNH SAU KHI ĐÃ ĐĂNG KÝ THÀNH CÔNG
   return (
     <div className={`min-h-screen font-sans flex flex-col transition-colors duration-300 ${wrapperThemeClass}`}>
+      {/* Audio nền dùng chung cho mọi user */}
+      <audio ref={audioElRef} src={appSettings.music_url || undefined} loop preload="none" />
       
       {/* HEADER */}
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -532,7 +605,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <button onClick={toggleBackgroundMusic} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isPlayingAudio ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
-            {isPlayingAudio ? `👽 Homesick Alien: ${bgVolume}%` : '🔇 Nhạc nền: Tắt'}
+            {isPlayingAudio ? `🎵 ${appSettings.music_title}: ${bgVolume}%` : (appSettings.music_url ? '🔇 Nhạc nền: Tắt' : '⚠️ Chưa có nhạc')}
           </button>
           <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl">
             <div className="text-right">
@@ -552,6 +625,7 @@ export default function App() {
         <button onClick={() => setActiveTab('leaderboard')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🏆 Bảng Xếp Hạng</button>
         <button onClick={() => setActiveTab('settings')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>⚙️ Thành Tích ({currentUser?.badges?.length}/15)</button>
         <button onClick={() => setActiveTab('ai-chat')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'ai-chat' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🤖 BIOSEA AI</button>
+        <button onClick={() => setActiveTab('admin')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'}`}>🔐 Admin</button>
       </nav>
 
       {/* MAIN LAYOUT */}
@@ -662,8 +736,8 @@ export default function App() {
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    {VIDEOS_LIST.map(video => (
-                      <div 
+                    {allVideos.map(video => (
+                    <div 
                         key={video.id} 
                         onClick={() => {
                           setPlayingVideoUrl(video.url);
@@ -846,6 +920,53 @@ export default function App() {
                   </form>
                 </div>
               )}
+
+              {/* TAB 7: ADMIN */}
+              {activeTab === 'admin' && (
+                <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-6 space-y-5">
+                  <div className="border-b border-slate-800 pb-3">
+                    <h2 className="text-lg font-black text-amber-400">🔐 Bảng Điều Khiển Admin</h2>
+                    <p className="text-xs text-slate-400 mt-1">Cấu hình nhạc nền, video, PDF dùng chung cho TẤT CẢ người dùng.</p>
+                  </div>
+                  {!isAdmin ? (
+                    <form onSubmit={handleAdminLogin} className="space-y-3 max-w-sm">
+                      <label className="text-[10px] font-bold uppercase text-slate-400">Mật khẩu admin (mặc định: bionova2026)</label>
+                      <input type="password" value={adminPwdInput} onChange={(e) => setAdminPwdInput(e.target.value)} className="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-sm text-slate-100" />
+                      <button type="submit" className="w-full bg-amber-500 text-slate-950 font-bold py-2 rounded-xl text-xs">Đăng nhập Admin</button>
+                      {adminMsg && <p className="text-xs text-slate-400">{adminMsg}</p>}
+                    </form>
+                  ) : (
+                    <div className="space-y-5">
+                      {adminMsg && <div className="text-xs p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-300">{adminMsg}</div>}
+
+                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                        <h3 className="text-sm font-bold text-teal-400">🎵 Nhạc nền chung</h3>
+                        <p className="text-[11px] text-slate-400">Hiện tại: {appSettings.music_url ? appSettings.music_title : 'Chưa thiết lập'}</p>
+                        <input type="file" accept="audio/*" onChange={handleUploadMusic} disabled={uploadingMusic} className="text-xs text-slate-300" />
+                      </section>
+
+                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                        <h3 className="text-sm font-bold text-indigo-400">📄 Tài liệu PDF chung</h3>
+                        <p className="text-[11px] text-slate-400">Hiện tại: {appSettings.pdf_url ? appSettings.pdf_name : 'Chưa thiết lập'}</p>
+                        <input type="file" accept="application/pdf" onChange={handleUploadPdf} disabled={uploadingPdf} className="text-xs text-slate-300" />
+                      </section>
+
+                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <h3 className="text-sm font-bold text-rose-400">🎬 Video do Admin thêm ({(appSettings.videos||[]).length})</h3>
+                        <VideoAdminForm onUploadFile={handleUploadVideoFile} onAddUrl={handleAddVideo} />
+                        <div className="space-y-1">
+                          {(appSettings.videos || []).map(v => (
+                            <div key={v.id} className="flex items-center justify-between text-xs bg-slate-900 border border-slate-800 rounded-lg p-2">
+                              <span className="truncate pr-2">🎬 {v.title}</span>
+                              <button onClick={() => handleDeleteVideo(v.id)} className="text-rose-400 text-[10px] font-bold">Xóa</button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
         </div>
 
@@ -861,10 +982,14 @@ export default function App() {
               <p className="text-xs font-bold text-slate-300">Xem video 3D mượt mà ngay trên tab Thư Viện</p>
             </div>
             <div className="space-y-2 text-xs">
-              <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-                <span className="text-slate-300 truncate pr-2">Bang_So_Sanh_Nguyen_Phan_Giam_Phan.pdf</span>
-                <span className="text-teal-400 font-medium hover:underline cursor-pointer shrink-0">Tải về</span>
-              </div>
+              {appSettings.pdf_url ? (
+                <a href={appSettings.pdf_url} target="_blank" rel="noopener noreferrer" download className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between hover:border-teal-500/50 transition-colors">
+                  <span className="text-slate-300 truncate pr-2">📄 {appSettings.pdf_name}</span>
+                  <span className="text-teal-400 font-bold shrink-0">Tải về</span>
+                </a>
+              ) : (
+                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-slate-500 text-center italic">Admin chưa tải PDF</div>
+              )}
             </div>
           </div>
         </div>
