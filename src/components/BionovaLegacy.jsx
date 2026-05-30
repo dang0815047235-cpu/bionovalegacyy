@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function VideoAdminForm({ onUploadFile, onAddUrl }) {
   const [title, setTitle] = React.useState('');
@@ -189,6 +191,15 @@ const BADGES_LIST = [
   { id: 'b13', name: '👑 Kỉ Lục Biến Dị', desc: 'Đạt tối đa 90/90 điểm câu đúng', icon: '👑' },
   { id: 'b14', name: '📡 Tần Số Không Gian', desc: 'Kích hoạt nghe nhạc nền Alien', icon: '📡' },
   { id: 'b15', name: '🎓 Thượng Đỉnh Bionova', desc: 'Có tên trong Top 1 Bảng xếp hạng', icon: '🎓' }
+];
+
+// 👑 HUY HIỆU ĐẶC QUYỀN CHỈ DÀNH CHO ADMIN
+const ADMIN_BADGES_LIST = [
+  { id: 'a1', name: '👑 Tối Thượng Quản Trị', desc: 'Đặc quyền tối cao của Admin BIONOVA', icon: '👑' },
+  { id: 'a2', name: '🛡️ Vệ Thần Hệ Thống', desc: 'Bảo vệ và điều hành toàn bộ hệ sinh thái', icon: '🛡️' },
+  { id: 'a3', name: '⚜️ Kiến Trúc Sư Bionova', desc: 'Người tạo lập và kiến tạo nội dung học liệu', icon: '⚜️' },
+  { id: 'a4', name: '💎 Tinh Thể Vô Cực', desc: 'Huy hiệu huyền thoại độc nhất của Admin', icon: '💎' },
+  { id: 'a5', name: '🔱 Quyền Trượng Di Truyền', desc: 'Quyền lực tuyệt đối với mọi học viên', icon: '🔱' }
 ];
 
 // 🏅 HỆ THỐNG 15 DANH HIỆU NÂNG CẤP THEO TIẾN TRÌNH ĐIỂM
@@ -767,7 +778,7 @@ export default function App() {
         <button onClick={() => setActiveTab('videos')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'videos' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🎥 Thư Viện Video (15)</button>
         <button onClick={() => setActiveTab('quiz')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'quiz' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>✍️ Trắc Nghiệm (90 Câu)</button>
         <button onClick={() => setActiveTab('leaderboard')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🏆 Bảng Xếp Hạng</button>
-        <button onClick={() => setActiveTab('settings')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>⚙️ Thành Tích ({currentUser?.badges?.length}/15)</button>
+        <button onClick={() => setActiveTab('settings')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>⚙️ Thành Tích ({isAdmin ? `${BADGES_LIST.length + ADMIN_BADGES_LIST.length}/${BADGES_LIST.length + ADMIN_BADGES_LIST.length}` : `${currentUser?.badges?.length || 0}/${BADGES_LIST.length}`})</button>
         <button onClick={() => setActiveTab('ai-chat')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'ai-chat' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🤖 BIOSEA AI</button>
         <button onClick={() => setActiveTab('admin')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'}`}>🔐 Admin</button>
       </nav>
@@ -1049,18 +1060,21 @@ export default function App() {
 
                   {/* DANH SÁCH 15 HUY HIỆU */}
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                    <h3 className="text-base font-bold text-slate-100 border-b border-slate-800 pb-3 mb-4">🏅 Đại Kho Tàng 15 Huy Hiệu Thành Tích Độc Quyền</h3>
+                    <h3 className="text-base font-bold text-slate-100 border-b border-slate-800 pb-3 mb-4">
+                      🏅 Đại Kho Tàng Huy Hiệu Thành Tích {isAdmin && <span className="text-amber-400">+ Đặc Quyền Admin</span>}
+                    </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                      {BADGES_LIST.map((badge) => {
-                        const hasBadge = currentUser?.badges?.includes(badge.icon);
+                      {[...BADGES_LIST, ...(isAdmin ? ADMIN_BADGES_LIST : [])].map((badge) => {
+                        const isAdminBadge = ADMIN_BADGES_LIST.some(b => b.icon === badge.icon);
+                        const hasBadge = isAdmin ? true : currentUser?.badges?.includes(badge.icon);
                         return (
-                          <div key={badge.id} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${hasBadge ? 'border-teal-500/40 bg-teal-500/[0.02]' : 'border-slate-900 opacity-30'}`}>
+                          <div key={badge.id} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${isAdminBadge ? 'border-amber-500/50 bg-amber-500/[0.04]' : hasBadge ? 'border-teal-500/40 bg-teal-500/[0.02]' : 'border-slate-900 opacity-30'}`}>
                             <div className="text-2xl">{badge.icon}</div>
                             <div>
                               <p className="font-bold text-slate-200">{badge.name}</p>
                               <p className="text-[11px] text-slate-400 mt-0.5">{badge.desc}</p>
                             </div>
-                            {hasBadge ? <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Đã mở</span> : <span className="ml-auto text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>}
+                            {isAdminBadge ? <span className="ml-auto text-[9px] bg-amber-500/20 text-amber-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Admin</span> : hasBadge ? <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Đã mở</span> : <span className="ml-auto text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>}
                           </div>
                         );
                       })}
@@ -1075,8 +1089,12 @@ export default function App() {
                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 text-xs sm:text-sm">
                     {messages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] rounded-xl p-3 leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-950 border border-slate-800 text-slate-200'}`}>
-                          {msg.text}
+                        <div className={`max-w-[85%] rounded-xl p-3 leading-relaxed ${msg.role === 'user' ? 'bg-teal-500 text-slate-950 font-bold whitespace-pre-wrap' : 'bg-slate-950 border border-slate-800 text-slate-200'}`}>
+                          {msg.role === 'user' ? msg.text : (
+                            <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-strong:text-teal-300 prose-code:text-amber-300 prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded prose-a:text-teal-400">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
