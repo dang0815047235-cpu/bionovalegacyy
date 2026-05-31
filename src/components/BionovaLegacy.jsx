@@ -240,6 +240,11 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
   const [accountsList, setAccountsList] = useState([]);
+  const [pwdOld, setPwdOld] = useState('');
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdNew2, setPwdNew2] = useState('');
+  const [pwdMsg, setPwdMsg] = useState(null); // { type:'ok'|'err', text:string }
+  const [pwdLoading, setPwdLoading] = useState(false);
 
   // Quản lý trạng thái xem video
   const [playingVideoUrl, setPlayingVideoUrl] = useState(null);
@@ -467,6 +472,36 @@ export default function App() {
     setUsernameInput('');
     if (audioElRef.current) audioElRef.current.pause();
     setIsPlayingAudio(false);
+  };
+
+  // Đổi mật khẩu (gọi RPC change_password — verify mật khẩu cũ trước khi cập nhật)
+  const handleChangePassword = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setPwdMsg(null);
+    if (!currentUser?.id) { setPwdMsg({ type:'err', text:'Bạn cần đăng nhập.' }); return; }
+    if (!pwdOld || !pwdNew || !pwdNew2) { setPwdMsg({ type:'err', text:'Vui lòng nhập đầy đủ 3 ô.' }); return; }
+    if (pwdNew.length < 6 || pwdNew.length > 72) { setPwdMsg({ type:'err', text:'Mật khẩu mới phải 6-72 ký tự.' }); return; }
+    if (pwdNew !== pwdNew2) { setPwdMsg({ type:'err', text:'Mật khẩu mới nhập lại không khớp.' }); return; }
+    if (pwdNew === pwdOld) { setPwdMsg({ type:'err', text:'Mật khẩu mới phải khác mật khẩu cũ.' }); return; }
+    setPwdLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('change_password', {
+        p_user_id: currentUser.id,
+        p_old_password: pwdOld,
+        p_new_password: pwdNew,
+      });
+      if (error) { setPwdMsg({ type:'err', text: error.message || 'Đổi mật khẩu thất bại.' }); return; }
+      if (data === true) {
+        setPwdMsg({ type:'ok', text:'✅ Đổi mật khẩu thành công! Lần đăng nhập sau dùng mật khẩu mới nhé.' });
+        setPwdOld(''); setPwdNew(''); setPwdNew2('');
+      } else {
+        setPwdMsg({ type:'err', text:'Đổi mật khẩu thất bại.' });
+      }
+    } catch (err) {
+      setPwdMsg({ type:'err', text: err?.message || 'Có lỗi xảy ra, thử lại sau.' });
+    } finally {
+      setPwdLoading(false);
+    }
   };
 
   const handleResetData = async () => {
@@ -1058,6 +1093,54 @@ export default function App() {
                       <input type="text" defaultValue={currentUser?.real_name} onBlur={(e) => handleUpdateNickname(e.target.value)} placeholder="Sửa tên hiển thị..." className="w-full bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400" />
                       <p className="text-[10px] text-slate-500">Username: @{currentUser?.username} (không đổi được)</p>
                       <button onClick={handleResetData} className="w-full text-left p-2.5 rounded-xl text-xs bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold hover:bg-rose-500/20 transition-all">🔄 Reset toàn bộ điểm số & huy hiệu</button>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 md:col-span-2">
+                      <h3 className="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2">🔐 Đổi Mật Khẩu</h3>
+                      <form onSubmit={handleChangePassword} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input
+                          type="password"
+                          value={pwdOld}
+                          onChange={(e) => setPwdOld(e.target.value)}
+                          placeholder="Mật khẩu cũ"
+                          autoComplete="current-password"
+                          className="bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400"
+                        />
+                        <input
+                          type="password"
+                          value={pwdNew}
+                          onChange={(e) => setPwdNew(e.target.value)}
+                          placeholder="Mật khẩu mới (6-72 ký tự)"
+                          autoComplete="new-password"
+                          minLength={6}
+                          maxLength={72}
+                          className="bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400"
+                        />
+                        <input
+                          type="password"
+                          value={pwdNew2}
+                          onChange={(e) => setPwdNew2(e.target.value)}
+                          placeholder="Nhập lại mật khẩu mới"
+                          autoComplete="new-password"
+                          minLength={6}
+                          maxLength={72}
+                          className="bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl text-xs font-bold text-slate-100 focus:outline-none focus:border-teal-400"
+                        />
+                        <button
+                          type="submit"
+                          disabled={pwdLoading}
+                          className="md:col-span-3 w-full p-2.5 rounded-xl text-xs font-bold bg-teal-500 hover:bg-teal-400 text-slate-950 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {pwdLoading ? 'Đang cập nhật...' : '🔒 Cập nhật mật khẩu'}
+                        </button>
+                      </form>
+                      {pwdMsg && (
+                        <p className={`text-[11px] font-bold ${pwdMsg.type === 'ok' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {pwdMsg.text}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-slate-500">
+                        Mật khẩu được mã hoá bằng bcrypt phía server. Mật khẩu cũ phải đúng thì mới đổi được.
+                      </p>
                     </div>
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                       <h3 className="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2">🎛️ Tùy Chỉnh Giao Diện</h3>
