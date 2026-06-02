@@ -262,6 +262,14 @@ export default function App() {
   const [aiInput, setAiInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+  const chatScrollRef = React.useRef(null);
+
+  // Tự động cuộn xuống dưới khi có tin nhắn mới hoặc đang stream typewriter
+  React.useEffect(() => {
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, isAiLoading]);
 
   // Cấu hình do admin đặt (đồng bộ tất cả thiết bị)
   const [appSettings, setAppSettings] = useState({
@@ -727,8 +735,22 @@ export default function App() {
       const data = await res.json();
       const reply = data?.reply
         || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không nhận được phản hồi từ AI.');
-      setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+      // Hiệu ứng đánh máy từng chữ giống ChatGPT
       setIsAiLoading(false);
+      setMessages(prev => [...prev, { role: 'assistant', text: '' }]);
+      const chars = Array.from(reply);
+      let i = 0;
+      const step = Math.max(1, Math.floor(chars.length / 400)); // chunk size để mượt với reply dài
+      const interval = setInterval(() => {
+        i = Math.min(chars.length, i + step);
+        const partial = chars.slice(0, i).join('');
+        setMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', text: partial };
+          return next;
+        });
+        if (i >= chars.length) clearInterval(interval);
+      }, 18);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Lỗi kết nối AI: ' + error.message }]);
       setIsAiLoading(false);
@@ -1185,7 +1207,11 @@ export default function App() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       {[...BADGES_LIST, ...(isAdmin ? ADMIN_BADGES_LIST : [])].map((badge) => {
                         const isAdminBadge = ADMIN_BADGES_LIST.some(b => b.icon === badge.icon);
-                        const hasBadge = isAdmin ? true : currentUser?.badges?.includes(badge.icon);
+                        // Admin chỉ tự động mở các huy hiệu đặc quyền admin.
+                        // Huy hiệu thường vẫn phải đạt điểm như user bình thường.
+                        const hasBadge = isAdminBadge
+                          ? isAdmin
+                          : !!currentUser?.badges?.includes(badge.icon);
                         return (
                           <div key={badge.id} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${isAdminBadge ? 'border-amber-500/50 bg-amber-500/[0.04]' : hasBadge ? 'border-teal-500/40 bg-teal-500/[0.02]' : 'border-slate-900 opacity-30'}`}>
                             <div className="text-2xl">{badge.icon}</div>
@@ -1205,7 +1231,7 @@ export default function App() {
               {/* TAB 6: TRỢ LÝ BIOSEA AI */}
               {activeTab === 'ai-chat' && (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col h-[480px]">
-                  <div className="flex-1 overflow-y-auto space-y-3 pr-2 text-xs sm:text-sm">
+                  <div ref={chatScrollRef} className="flex-1 overflow-y-auto space-y-3 pr-2 text-xs sm:text-sm scroll-smooth">
                     {messages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[85%] rounded-xl p-3 leading-relaxed ${msg.role === 'user' ? 'bg-teal-500 text-slate-950 font-bold whitespace-pre-wrap' : 'bg-slate-950 border border-slate-800 text-slate-200'}`}>
@@ -1247,11 +1273,12 @@ export default function App() {
                         <input type="file" accept="audio/*" onChange={handleUploadMusic} disabled={uploadingMusic} className="text-xs text-slate-300" />
                       </section>
 
-                      <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
-                        <h3 className="text-sm font-bold text-indigo-400">📄 Tài liệu PDF chung</h3>
-                        <p className="text-[11px] text-slate-400">Hiện tại: {appSettings.pdf_url ? appSettings.pdf_name : 'Chưa thiết lập'}</p>
-                        <input type="file" accept="application/pdf" onChange={handleUploadPdf} disabled={uploadingPdf} className="text-xs text-slate-300" />
-                      </section>
+                       <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                         <h3 className="text-sm font-bold text-indigo-400">📄 Tài liệu chung (mọi định dạng)</h3>
+                         <p className="text-[11px] text-slate-400">Hiện tại: {appSettings.pdf_url ? appSettings.pdf_name : 'Chưa thiết lập'}</p>
+                         <input type="file" onChange={handleUploadPdf} disabled={uploadingPdf} className="text-xs text-slate-300" />
+                         <p className="text-[10px] text-slate-500">Hỗ trợ PDF, DOCX, PPTX, hình ảnh, video, audio... Người dùng có thể xem thử hoặc tải về.</p>
+                       </section>
 
                       <section className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
                         <h3 className="text-sm font-bold text-rose-400">🎬 Video do Admin thêm ({(appSettings.videos||[]).length})</h3>
@@ -1317,17 +1344,73 @@ export default function App() {
             </div>
             <div className="space-y-2 text-xs">
               {appSettings.pdf_url ? (
-                <a href={appSettings.pdf_url} target="_blank" rel="noopener noreferrer" download className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between hover:border-teal-500/50 transition-colors">
-                  <span className="text-slate-300 truncate pr-2">📄 {appSettings.pdf_name}</span>
-                  <span className="text-teal-400 font-bold shrink-0">Tải về</span>
-                </a>
+                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-300 truncate flex-1">📄 {appSettings.pdf_name}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPreviewFile({ url: appSettings.pdf_url, name: appSettings.pdf_name })}
+                      className="flex-1 px-3 py-1.5 bg-indigo-500/20 text-indigo-300 font-bold rounded-lg hover:bg-indigo-500 hover:text-slate-950 transition-all border border-indigo-500/40"
+                    >
+                      👁️ Xem thử
+                    </button>
+                    <a
+                      href={appSettings.pdf_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      download={appSettings.pdf_name}
+                      className="flex-1 px-3 py-1.5 bg-teal-500/20 text-teal-300 font-bold rounded-lg hover:bg-teal-500 hover:text-slate-950 transition-all border border-teal-500/40 text-center"
+                    >
+                      ⬇️ Tải về
+                    </a>
+                  </div>
+                </div>
               ) : (
-                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-slate-500 text-center italic">Admin chưa tải PDF</div>
+                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-slate-500 text-center italic">Admin chưa tải tài liệu</div>
               )}
             </div>
           </div>
         </div>
       </main>
+
+      {/* MODAL XEM THỬ TÀI LIỆU */}
+      {previewFile && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPreviewFile(null)}>
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 border-b border-slate-800 shrink-0">
+              <p className="text-sm font-bold text-slate-200 truncate pr-2">📄 {previewFile.name}</p>
+              <div className="flex items-center gap-2 shrink-0">
+                <a href={previewFile.url} target="_blank" rel="noopener noreferrer" download={previewFile.name} className="text-[11px] bg-teal-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg hover:bg-teal-400">⬇️ Tải về</a>
+                <button onClick={() => setPreviewFile(null)} className="text-[11px] bg-rose-500/20 text-rose-300 font-bold px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-slate-950">✕ Đóng</button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-950 overflow-auto">
+              {(() => {
+                const url = previewFile.url;
+                const name = (previewFile.name || '').toLowerCase();
+                const ext = name.split('.').pop();
+                const isImage = ['png','jpg','jpeg','gif','webp','svg','bmp'].includes(ext);
+                const isVideo = ['mp4','webm','ogg','mov','m4v'].includes(ext);
+                const isAudio = ['mp3','wav','ogg','m4a','aac','flac'].includes(ext);
+                const isPdf = ext === 'pdf';
+                const isOffice = ['doc','docx','xls','xlsx','ppt','pptx'].includes(ext);
+                if (isImage) return <img src={url} alt={previewFile.name} className="max-w-full max-h-full mx-auto object-contain" />;
+                if (isVideo) return <video src={url} controls className="w-full h-full bg-black" />;
+                if (isAudio) return <div className="p-6 flex items-center justify-center h-full"><audio src={url} controls className="w-full max-w-md" /></div>;
+                if (isPdf) return <iframe src={url} title={previewFile.name} className="w-full h-full" />;
+                if (isOffice) return <iframe src={`https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`} title={previewFile.name} className="w-full h-full bg-white" />;
+                return (
+                  <div className="p-6 text-center text-slate-400 text-sm space-y-3 h-full flex flex-col items-center justify-center">
+                    <p>📦 Không thể xem trực tiếp định dạng <span className="text-teal-400 font-bold">.{ext}</span></p>
+                    <a href={url} target="_blank" rel="noopener noreferrer" download={previewFile.name} className="px-4 py-2 bg-teal-500 text-slate-950 font-bold rounded-lg">⬇️ Tải về để mở</a>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
