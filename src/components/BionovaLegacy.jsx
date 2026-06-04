@@ -2,6 +2,23 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import brandAsset from '@/assets/bionova-brand.png.asset.json';
+
+// Trộn ngẫu nhiên mảng (Fisher–Yates) — dùng cho thứ tự câu hỏi & đáp án
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function buildShuffledQuiz(questions) {
+  return shuffleArray(questions).map((q) => ({
+    ...q,
+    options: shuffleArray(q.options),
+  }));
+}
 
 function VideoAdminForm({ onUploadFile, onAddUrl }) {
   const [title, setTitle] = React.useState('');
@@ -258,6 +275,8 @@ export default function App() {
   const [isAnswered, setIsAnswered] = useState(false);
   const [score, setScore] = useState(0);
   const [quizComplete, setQuizComplete] = useState(false);
+  // Thứ tự câu hỏi & đáp án được random mỗi lần làm bài
+  const [quizOrder, setQuizOrder] = useState(() => buildShuffledQuiz(QUIZ_QUESTIONS));
 
   const [aiInput, setAiInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -582,7 +601,7 @@ export default function App() {
     if (isAnswered) return;
     setSelectedAnswer(option);
     setIsAnswered(true);
-    if (option === QUIZ_QUESTIONS[quizIndex].answer) {
+    if (option === quizOrder[quizIndex].answer) {
       setScore(prev => {
         const nextScore = prev + 1;
         if (isLoggedIn) updateGlobalStats(nextScore);
@@ -690,7 +709,7 @@ export default function App() {
   };
 
   const handleNextQuestion = () => {
-    if (quizIndex < QUIZ_QUESTIONS.length - 1) {
+    if (quizIndex < quizOrder.length - 1) {
       setQuizIndex(prev => prev + 1);
       setSelectedAnswer(null);
       setIsAnswered(false);
@@ -700,6 +719,7 @@ export default function App() {
   };
 
   const restartQuiz = () => {
+    setQuizOrder(buildShuffledQuiz(QUIZ_QUESTIONS));
     setQuizIndex(0);
     setSelectedAnswer(null);
     setIsAnswered(false);
@@ -757,7 +777,7 @@ export default function App() {
     }
   };
 
-  const progressPercent = useMemo(() => Math.round(((quizIndex + 1) / QUIZ_QUESTIONS.length) * 100), [quizIndex]);
+  const progressPercent = useMemo(() => Math.round(((quizIndex + 1) / quizOrder.length) * 100), [quizIndex, quizOrder.length]);
   const sortedLeaderboard = useMemo(() => [...leaderboard].sort((a, b) => b.score - a.score), [leaderboard]);
   const allVideos = useMemo(() => {
     const admin = (appSettings.videos || []).map(v => ({ topic: 'Admin', thumb: '🎬', duration: '—', ...v }));
@@ -843,9 +863,11 @@ export default function App() {
       {/* HEADER */}
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${accentColorClass.split(' text-')[0]} flex items-center justify-center shadow-lg`}>
-            <span className="font-bold text-xl">🧫</span>
-          </div>
+          <img
+            src={brandAsset.url}
+            alt="BIONOVA LEGACY"
+            className="w-12 h-12 rounded-xl object-cover shadow-lg ring-1 ring-slate-700"
+          />
           <div>
             <h1 className="text-lg font-bold bg-gradient-to-r from-teal-400 to-indigo-400 bg-clip-text text-transparent">BIONOVA LEGACY</h1>
             <p className="text-xs text-slate-400 font-medium">Hệ thống Khám phá Chu kì Tế bào & Phân bào</p>
@@ -853,7 +875,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <button onClick={toggleBackgroundMusic} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isPlayingAudio ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
-            {isPlayingAudio ? `🎵 ${appSettings.music_title}: ${bgVolume}%` : (appSettings.music_url ? '🔇 Nhạc nền: Tắt' : '⚠️ Chưa có nhạc')}
+            {isPlayingAudio ? `🎵 Nhạc nền: Bật (${bgVolume}%)` : (appSettings.music_url ? '🔇 Nhạc nền: Tắt' : '⚠️ Chưa có nhạc')}
           </button>
           <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl">
             <div className="text-right">
@@ -1038,20 +1060,20 @@ export default function App() {
                   {!quizComplete ? (
                     <>
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded font-bold">Phần chuyên sâu: {QUIZ_QUESTIONS[quizIndex].topic}</span>
-                        <span className="font-mono text-slate-400">Câu hỏi: {quizIndex + 1} / {QUIZ_QUESTIONS.length}</span>
+                        <span className="text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded font-bold">Phần chuyên sâu: {quizOrder[quizIndex].topic}</span>
+                        <span className="font-mono text-slate-400">Câu hỏi: {quizIndex + 1} / {quizOrder.length}</span>
                       </div>
                       <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
                         <div className="h-full bg-gradient-to-r from-teal-400 to-indigo-500 transition-all duration-300" style={{ width: `${progressPercent}%` }} />
                       </div>
                       <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                        <p className="text-sm sm:text-base font-bold text-slate-100 leading-relaxed">{QUIZ_QUESTIONS[quizIndex].question}</p>
+                        <p className="text-sm sm:text-base font-bold text-slate-100 leading-relaxed">{quizOrder[quizIndex].question}</p>
                       </div>
                       <div className="grid grid-cols-1 gap-2.5">
-                        {QUIZ_QUESTIONS[quizIndex].options.map((option, idx) => {
+                        {quizOrder[quizIndex].options.map((option, idx) => {
                           let btnStyle = "bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700";
                           if (isAnswered) {
-                            if (option === QUIZ_QUESTIONS[quizIndex].answer) btnStyle = "bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold";
+                            if (option === quizOrder[quizIndex].answer) btnStyle = "bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold";
                             else if (option === selectedAnswer) btnStyle = "bg-rose-500/20 border-rose-500 text-rose-400";
                             else btnStyle = "bg-slate-950/40 border-slate-900 text-slate-600 opacity-60";
                           }
@@ -1065,7 +1087,7 @@ export default function App() {
                       {isAnswered && (
                         <div className="flex justify-end pt-2">
                           <button onClick={handleNextQuestion} className="px-5 py-2 rounded-xl bg-gradient-to-r from-teal-400 to-indigo-500 text-slate-950 text-xs font-bold shadow-lg">
-                            {quizIndex === QUIZ_QUESTIONS.length - 1 ? "Xem Tổng Kết Điểm" : "Câu Tiếp Theo →"}
+                            {quizIndex === quizOrder.length - 1 ? "Xem Tổng Kết Điểm" : "Câu Tiếp Theo →"}
                           </button>
                         </div>
                       )}
@@ -1076,7 +1098,7 @@ export default function App() {
                       <h3 className="text-xl font-bold">Hoàn Thành Đợt Khảo Sát Thử Thách!</h3>
                       <div className="max-w-xs mx-auto p-4 bg-slate-950 border border-slate-800 rounded-xl">
                         <span className="text-xs text-slate-500">Kết quả đạt được</span>
-                        <p className="text-3xl font-black text-teal-400 mt-1">{score} / {QUIZ_QUESTIONS.length}</p>
+                        <p className="text-3xl font-black text-teal-400 mt-1">{score} / {quizOrder.length}</p>
                       </div>
                       <button onClick={restartQuiz} className="px-5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs font-bold transition-all hover:bg-slate-700">Làm lại từ đầu</button>
                     </div>
