@@ -788,21 +788,21 @@ export default function App() {
   }, [appSettings.videos, appSettings.default_videos]);
   
   const wrapperThemeClass = useMemo(() => {
-    if (themeStyle === 'ocean') return 'bg-slate-950 text-sky-100';
+    if (themeStyle === 'ocean') return 'bg-[#040d1f] text-blue-100';
     if (themeStyle === 'emerald') return 'bg-stone-950 text-emerald-100';
     return 'bg-slate-950 text-slate-100';
   }, [themeStyle]);
 
-  // Áp filter hue-rotate lên toàn bộ app để 3 nút theme có tác dụng thực sự
-  // (toàn bộ tone teal/indigo của giao diện sẽ ngả sang xanh dương hoặc xanh lục).
+  // Áp filter lên toàn bộ app để 3 nút theme có tác dụng thực sự
+  // Ocean: tone xanh dương sâu thẳm, tối hơn; Emerald: ngả lục.
   const wrapperThemeStyle = useMemo(() => {
-    if (themeStyle === 'ocean') return { filter: 'hue-rotate(-25deg) saturate(1.1)' };
+    if (themeStyle === 'ocean') return { filter: 'hue-rotate(-30deg) saturate(1.2) brightness(0.85)' };
     if (themeStyle === 'emerald') return { filter: 'hue-rotate(-18deg) saturate(1.1)' };
     return undefined;
   }, [themeStyle]);
 
   const accentColorClass = useMemo(() => {
-    if (themeStyle === 'ocean') return 'from-sky-400 to-blue-500 text-sky-400 border-sky-500';
+    if (themeStyle === 'ocean') return 'from-blue-700 to-blue-900 text-blue-300 border-blue-700';
     if (themeStyle === 'emerald') return 'from-emerald-400 to-teal-500 text-emerald-400 border-emerald-500';
     return 'from-teal-400 to-indigo-500 text-teal-400 border-indigo-500';
   }, [themeStyle]);
@@ -1226,7 +1226,7 @@ export default function App() {
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-[11px] font-bold pt-1">
                           <button onClick={() => setThemeStyle('slate')} className={`p-2 rounded-lg border ${themeStyle === 'slate' ? 'bg-teal-500 text-slate-950 border-teal-400' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Mặc định</button>
-                          <button onClick={() => setThemeStyle('ocean')} className={`p-2 rounded-lg border ${themeStyle === 'ocean' ? 'bg-sky-500 text-slate-950 border-sky-400' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Đại dương</button>
+                          <button onClick={() => setThemeStyle('ocean')} className={`p-2 rounded-lg border ${themeStyle === 'ocean' ? 'bg-blue-700 text-blue-100 border-blue-500' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Đại dương</button>
                           <button onClick={() => setThemeStyle('emerald')} className={`p-2 rounded-lg border ${themeStyle === 'emerald' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Lục bảo</button>
                       </div>
                     </div>
