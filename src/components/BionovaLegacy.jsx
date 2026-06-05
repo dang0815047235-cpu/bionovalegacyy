@@ -604,13 +604,16 @@ export default function App() {
     if (isAnswered) return;
     setSelectedAnswer(option);
     setIsAnswered(true);
-    if (option === quizOrder[quizIndex].answer) {
+    const correct = option === quizOrder[quizIndex].answer;
+    if (correct) {
       setScore(prev => {
         const nextScore = prev + 1;
         if (isLoggedIn) updateGlobalStats(nextScore);
         return nextScore;
       });
     }
+    // Tự động gọi AI giải thích sau khi trả lời
+    handleAiExplainQuiz(option, correct);
   };
 
   // =================== ADMIN FUNCTIONS ===================
@@ -742,6 +745,29 @@ export default function App() {
     try {
       const system = 'Bạn là BIOSEA AI — chuyên gia Sinh học THPT. Hãy phân tích câu trắc nghiệm và chọn đáp án đúng. Trả lời ngắn gọn bằng tiếng Việt theo định dạng:\n**Đáp án:** <nguyên văn đáp án đúng>\n**Giải thích:** <1-3 câu ngắn gọn, rõ ràng>';
       const user = `Câu hỏi: ${q.question}\nCác lựa chọn:\n${q.options.map((o,i)=>`${String.fromCharCode(65+i)}. ${o}`).join('\n')}`;
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system, messages: [{ role: 'user', content: user }] }),
+      });
+      const data = await res.json();
+      setAiQuizHint(data?.reply || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không có phản hồi từ AI.'));
+    } catch (err) {
+      setAiQuizHint('⚠️ Lỗi kết nối AI: ' + err.message);
+    } finally {
+      setAiQuizLoading(false);
+    }
+  };
+
+  // 🧠 AI giải thích sau khi người dùng chọn đáp án (đúng/sai)
+  const handleAiExplainQuiz = async (userAnswer, isCorrect) => {
+    const q = quizOrder[quizIndex];
+    if (!q) return;
+    setAiQuizLoading(true);
+    setAiQuizHint('');
+    try {
+      const system = `Bạn là BIOSEA AI — gia sư Sinh học THPT thân thiện. Học viên vừa ${isCorrect ? 'TRẢ LỜI ĐÚNG ✅' : 'TRẢ LỜI SAI ❌'}. Hãy giải thích ngắn gọn bằng tiếng Việt theo định dạng markdown:\n**Nhận xét:** <1 câu khen/động viên>\n**Đáp án đúng:** <nguyên văn đáp án đúng>\n**Giải thích:** <2-4 câu rõ ràng, dễ hiểu, có thể dùng emoji 🧬🧫>${isCorrect ? '' : '\n**Vì sao em sai:** <chỉ rõ lý do đáp án em chọn không đúng>'}`;
+      const user = `Câu hỏi: ${q.question}\nCác lựa chọn:\n${q.options.map((o,i)=>`${String.fromCharCode(65+i)}. ${o}`).join('\n')}\nĐáp án đúng: ${q.answer}\nĐáp án học viên chọn: ${userAnswer}`;
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1140,8 +1166,10 @@ export default function App() {
                           {aiQuizLoading ? '🧠 AI đang suy luận...' : '🧠 Nhờ AI giải câu này'}
                         </button>
                         {aiQuizHint && (
-                          <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
-                            {aiQuizHint}
+                          <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs text-slate-200 leading-relaxed">
+                            <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-strong:text-teal-300 prose-code:text-amber-300 prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded prose-a:text-teal-400">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiQuizHint}</ReactMarkdown>
+                            </div>
                           </div>
                         )}
                       </div>
