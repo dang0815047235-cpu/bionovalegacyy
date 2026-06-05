@@ -276,8 +276,10 @@ export default function App() {
   const [isAnswered, setIsAnswered] = useState(false);
   const [score, setScore] = useState(0);
   const [quizComplete, setQuizComplete] = useState(false);
-  // Thứ tự câu hỏi & đáp án được random mỗi lần làm bài
+  // Chỉ random thứ tự đáp án, KHÔNG random thứ tự câu hỏi
   const [quizOrder, setQuizOrder] = useState(() => buildShuffledQuiz(QUIZ_QUESTIONS));
+  const [aiQuizHint, setAiQuizHint] = useState('');
+  const [aiQuizLoading, setAiQuizLoading] = useState(false);
 
   const [aiInput, setAiInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -714,6 +716,7 @@ export default function App() {
       setQuizIndex(prev => prev + 1);
       setSelectedAnswer(null);
       setIsAnswered(false);
+      setAiQuizHint('');
     } else {
       setQuizComplete(true);
     }
@@ -726,6 +729,31 @@ export default function App() {
     setIsAnswered(false);
     setScore(0);
     setQuizComplete(false);
+    setAiQuizHint('');
+  };
+
+  // 🧠 AI giải quyết câu hỏi quiz hiện tại
+  const handleAiSolveQuiz = async () => {
+    if (aiQuizLoading) return;
+    const q = quizOrder[quizIndex];
+    if (!q) return;
+    setAiQuizLoading(true);
+    setAiQuizHint('');
+    try {
+      const system = 'Bạn là BIOSEA AI — chuyên gia Sinh học THPT. Hãy phân tích câu trắc nghiệm và chọn đáp án đúng. Trả lời ngắn gọn bằng tiếng Việt theo định dạng:\n**Đáp án:** <nguyên văn đáp án đúng>\n**Giải thích:** <1-3 câu ngắn gọn, rõ ràng>';
+      const user = `Câu hỏi: ${q.question}\nCác lựa chọn:\n${q.options.map((o,i)=>`${String.fromCharCode(65+i)}. ${o}`).join('\n')}`;
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system, messages: [{ role: 'user', content: user }] }),
+      });
+      const data = await res.json();
+      setAiQuizHint(data?.reply || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không có phản hồi từ AI.'));
+    } catch (err) {
+      setAiQuizHint('⚠️ Lỗi kết nối AI: ' + err.message);
+    } finally {
+      setAiQuizLoading(false);
+    }
   };
 
   // Hệ thống Chat hỗ trợ AI
@@ -902,7 +930,7 @@ export default function App() {
       {/* TABS MENU */}
       <nav className="bg-slate-900 border-b border-slate-800 flex justify-center flex-wrap gap-1 p-2">
         <button onClick={() => setActiveTab('concepts')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'concepts' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>📚 Khái Niệm</button>
-        <button onClick={() => setActiveTab('videos')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'videos' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🎥 Thư Viện Video (15)</button>
+        <button onClick={() => setActiveTab('videos')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'videos' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🎥 Thư Viện Video ({allVideos.length})</button>
         <button onClick={() => setActiveTab('quiz')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'quiz' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>✍️ Trắc Nghiệm (90 Câu)</button>
         <button onClick={() => setActiveTab('leaderboard')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🏆 Bảng Xếp Hạng</button>
         <button onClick={() => setActiveTab('settings')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>⚙️ Thành Tích ({isAdmin ? `${BADGES_LIST.length + ADMIN_BADGES_LIST.length}/${BADGES_LIST.length + ADMIN_BADGES_LIST.length}` : `${currentUser?.badges?.length || 0}/${BADGES_LIST.length}`})</button>
@@ -1001,7 +1029,7 @@ export default function App() {
                       <h2 className="text-xl font-bold">Thư Viện Bài Giảng & Phim Mô Phỏng</h2>
                       <p className="text-xs text-slate-400 mt-1">Chọn một video bên dưới để khởi chạy trình phát đa phương tiện trực tiếp.</p>
                     </div>
-                    <span className="text-xs font-mono bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded">15 Video Trực Quan</span>
+                    <span className="text-xs font-mono bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded">{allVideos.length} Video Trực Quan</span>
                   </div>
 
                   {/* TRÌNH PHÁT VIDEO CHUYÊN NGHIỆP HIỆN TRÊN WEB KHI ẤN XEM */}
@@ -1103,6 +1131,20 @@ export default function App() {
                           </button>
                         </div>
                       )}
+                      <div className="pt-2 border-t border-slate-800 space-y-2">
+                        <button
+                          onClick={handleAiSolveQuiz}
+                          disabled={aiQuizLoading}
+                          className="w-full px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/40 text-indigo-300 text-xs font-bold hover:bg-indigo-500/20 transition-all disabled:opacity-50"
+                        >
+                          {aiQuizLoading ? '🧠 AI đang suy luận...' : '🧠 Nhờ AI giải câu này'}
+                        </button>
+                        {aiQuizHint && (
+                          <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+                            {aiQuizHint}
+                          </div>
+                        )}
+                      </div>
                     </>
                   ) : (
                     <div className="text-center py-8 space-y-4">
