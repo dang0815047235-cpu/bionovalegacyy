@@ -21,6 +21,49 @@ function buildShuffledQuiz(questions) {
   }));
 }
 
+// Gọi /api/chat ở chế độ streaming (SSE). onDelta nhận text tích lũy mỗi lần có token mới.
+async function streamAiChat({ system, messages }, onDelta) {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system, messages }),
+  });
+  if (!res.ok || !res.body) {
+    let errText = '';
+    try { errText = await res.text(); } catch {}
+    onDelta('⚠️ Lỗi AI: ' + (errText || res.status));
+    return '';
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      try {
+        const json = JSON.parse(data);
+        const delta = json?.choices?.[0]?.delta?.content
+          ?? json?.choices?.[0]?.message?.content
+          ?? '';
+        if (delta) {
+          full += delta;
+          onDelta(full);
+        }
+      } catch {}
+    }
+  }
+  return full;
+}
+
 function VideoAdminForm({ onUploadFile, onAddUrl }) {
   const [title, setTitle] = React.useState('');
   const [url, setUrl] = React.useState('');
@@ -745,13 +788,7 @@ export default function App() {
     try {
       const system = 'Bạn là BIOSEA AI — chuyên gia Sinh học THPT. Hãy phân tích câu trắc nghiệm và chọn đáp án đúng. Trả lời ngắn gọn bằng tiếng Việt theo định dạng:\n**Đáp án:** <nguyên văn đáp án đúng>\n**Giải thích:** <1-3 câu ngắn gọn, rõ ràng>';
       const user = `Câu hỏi: ${q.question}\nCác lựa chọn:\n${q.options.map((o,i)=>`${String.fromCharCode(65+i)}. ${o}`).join('\n')}`;
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system, messages: [{ role: 'user', content: user }] }),
-      });
-      const data = await res.json();
-      setAiQuizHint(data?.reply || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không có phản hồi từ AI.'));
+      await streamAiChat({ system, messages: [{ role: 'user', content: user }] }, (txt) => setAiQuizHint(txt));
     } catch (err) {
       setAiQuizHint('⚠️ Lỗi kết nối AI: ' + err.message);
     } finally {
@@ -768,13 +805,7 @@ export default function App() {
     try {
       const system = `Bạn là BIOSEA AI — gia sư Sinh học THPT thân thiện. Học viên vừa ${isCorrect ? 'TRẢ LỜI ĐÚNG ✅' : 'TRẢ LỜI SAI ❌'}. Hãy giải thích ngắn gọn bằng tiếng Việt theo định dạng markdown:\n**Nhận xét:** <1 câu khen/động viên>\n**Đáp án đúng:** <nguyên văn đáp án đúng>\n**Giải thích:** <2-4 câu rõ ràng, dễ hiểu, có thể dùng emoji 🧬🧫>${isCorrect ? '' : '\n**Vì sao em sai:** <chỉ rõ lý do đáp án em chọn không đúng>'}`;
       const user = `Câu hỏi: ${q.question}\nCác lựa chọn:\n${q.options.map((o,i)=>`${String.fromCharCode(65+i)}. ${o}`).join('\n')}\nĐáp án đúng: ${q.answer}\nĐáp án học viên chọn: ${userAnswer}`;
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system, messages: [{ role: 'user', content: user }] }),
-      });
-      const data = await res.json();
-      setAiQuizHint(data?.reply || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không có phản hồi từ AI.'));
+      await streamAiChat({ system, messages: [{ role: 'user', content: user }] }, (txt) => setAiQuizHint(txt));
     } catch (err) {
       setAiQuizHint('⚠️ Lỗi kết nối AI: ' + err.message);
     } finally {
@@ -802,30 +833,16 @@ export default function App() {
         role: m.role === 'assistant' ? 'assistant' : 'user',
         content: m.text,
       }));
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system: systemPrompt, messages: chatMessages }),
-      });
-      const data = await res.json();
-      const reply = data?.reply
-        || (data?.error ? '⚠️ Lỗi AI: ' + data.error : '⚠️ Không nhận được phản hồi từ AI.');
-      // Hiệu ứng đánh máy từng chữ giống ChatGPT
+      // Stream trực tiếp từ AI — hiển thị token ngay khi đến, nhanh hơn nhiều
       setIsAiLoading(false);
       setMessages(prev => [...prev, { role: 'assistant', text: '' }]);
-      const chars = Array.from(reply);
-      let i = 0;
-      const step = Math.max(1, Math.floor(chars.length / 400)); // chunk size để mượt với reply dài
-      const interval = setInterval(() => {
-        i = Math.min(chars.length, i + step);
-        const partial = chars.slice(0, i).join('');
+      await streamAiChat({ system: systemPrompt, messages: chatMessages }, (partial) => {
         setMessages(prev => {
           const next = [...prev];
           next[next.length - 1] = { role: 'assistant', text: partial };
           return next;
         });
-        if (i >= chars.length) clearInterval(interval);
-      }, 18);
+      });
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Lỗi kết nối AI: ' + error.message }]);
       setIsAiLoading(false);
