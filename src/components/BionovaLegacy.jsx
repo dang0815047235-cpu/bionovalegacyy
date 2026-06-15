@@ -330,11 +330,28 @@ export default function App() {
   const [previewFile, setPreviewFile] = useState(null);
   const chatScrollRef = React.useRef(null);
 
+  // 🆘 Bong bóng hỗ trợ AI + nhắn admin
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [supportMode, setSupportMode] = useState('ai'); // 'ai' | 'admin'
+  const [supportInput, setSupportInput] = useState('');
+  const [supportMessages, setSupportMessages] = useState([]); // tin AI cho user
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [adminTickets, setAdminTickets] = useState([]); // toàn bộ ticket (admin xem)
+  const [myTickets, setMyTickets] = useState([]); // ticket của user hiện tại
+  const [adminReplyDraft, setAdminReplyDraft] = useState({}); // {ticketId: text}
+  const [supportSentMsg, setSupportSentMsg] = useState('');
+  const supportScrollRef = React.useRef(null);
+
   // Tự động cuộn xuống dưới khi có tin nhắn mới hoặc đang stream typewriter
   React.useEffect(() => {
     const el = chatScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, isAiLoading]);
+
+  React.useEffect(() => {
+    const el = supportScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [supportMessages, supportLoading, supportOpen, supportMode]);
 
   // Cấu hình do admin đặt (đồng bộ tất cả thiết bị)
   const [appSettings, setAppSettings] = useState({
@@ -419,6 +436,30 @@ export default function App() {
     if (activeTab === 'admin' && isAdmin) loadAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentUser?.role]);
+
+  // 🆘 Load support tickets + realtime
+  const loadAdminTickets = async () => {
+    const { data } = await supabase.from('support_messages').select('*').order('created_at', { ascending: false }).limit(200);
+    if (data) setAdminTickets(data);
+  };
+  const loadMyTickets = async () => {
+    if (!currentUser?.id) return;
+    const { data } = await supabase.from('support_messages').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(50);
+    if (data) setMyTickets(data);
+  };
+  useEffect(() => {
+    if (!currentUser) return;
+    loadMyTickets();
+    if (isAdmin) loadAdminTickets();
+    const ch = supabase.channel('support_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_messages' }, () => {
+        loadMyTickets();
+        if (isAdmin) loadAdminTickets();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role]);
 
   // Lời chào AI thay đổi theo role
   useEffect(() => {
@@ -847,6 +888,77 @@ export default function App() {
       setMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Lỗi kết nối AI: ' + error.message }]);
       setIsAiLoading(false);
     }
+  };
+
+  // 🆘 Bong bóng hỗ trợ: gửi câu hỏi cho AI hỗ trợ kỹ thuật
+  const handleSupportAi = async (e) => {
+    e?.preventDefault?.();
+    const text = supportInput.trim();
+    if (!text || supportLoading) return;
+    const history = [...supportMessages, { role: 'user', text }];
+    setSupportMessages(history);
+    setSupportInput('');
+    setSupportLoading(true);
+    try {
+      const system = `Bạn là BIOSEA SUPPORT — trợ lý hỗ trợ kỹ thuật của BIONOVA LEGACY, đang giúp người dùng "${currentUser?.real_name || currentUser?.username}" xử lý các lỗi/khó khăn khi sử dụng app. App có các tính năng: đăng nhập, xem video, làm quiz 90 câu (chỉ random đáp án), bảng xếp hạng, huy hiệu, AI chat, nhạc nền, tài liệu PDF. Trả lời ngắn gọn, từng bước rõ ràng bằng tiếng Việt, có emoji. Nếu vấn đề vượt quyền hạn (ví dụ: khôi phục mật khẩu, xoá tài khoản, lỗi dữ liệu, khiếu nại), hãy hướng dẫn người dùng bấm nút "Nhắn Admin" ở tab bên cạnh để gửi trực tiếp cho quản trị viên.`;
+      const chatMsgs = history.slice(-10).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text }));
+      setSupportMessages(prev => [...prev, { role: 'assistant', text: '' }]);
+      await streamAiChat({ system, messages: chatMsgs }, (partial) => {
+        setSupportMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', text: partial };
+          return next;
+        });
+      });
+    } catch (err) {
+      setSupportMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Lỗi AI: ' + err.message }]);
+    } finally {
+      setSupportLoading(false);
+    }
+  };
+
+  // 🆘 Gửi tin nhắn trực tiếp cho admin
+  const handleSendToAdmin = async (e) => {
+    e?.preventDefault?.();
+    const text = supportInput.trim();
+    if (!text) return;
+    setSupportLoading(true);
+    const { error } = await supabase.from('support_messages').insert({
+      user_id: currentUser?.id || null,
+      username: currentUser?.username || 'guest',
+      real_name: currentUser?.real_name || null,
+      message: text,
+      status: 'open',
+    });
+    setSupportLoading(false);
+    if (error) {
+      setSupportSentMsg('⚠️ Không gửi được: ' + error.message);
+    } else {
+      setSupportInput('');
+      setSupportSentMsg('✅ Đã gửi cho Admin. Bạn sẽ nhận được phản hồi tại đây.');
+      loadMyTickets();
+      setTimeout(() => setSupportSentMsg(''), 4000);
+    }
+  };
+
+  // 🛡️ Admin trả lời ticket
+  const handleAdminReply = async (ticket) => {
+    const reply = (adminReplyDraft[ticket.id] || '').trim();
+    if (!reply) return;
+    const { error } = await supabase.from('support_messages').update({
+      reply, status: 'answered', replied_at: new Date().toISOString(),
+    }).eq('id', ticket.id);
+    if (!error) {
+      setAdminReplyDraft(prev => ({ ...prev, [ticket.id]: '' }));
+      loadAdminTickets();
+    } else {
+      alert('Lỗi: ' + error.message);
+    }
+  };
+  const handleDeleteTicket = async (id) => {
+    if (!confirm('Xoá tin nhắn này?')) return;
+    await supabase.from('support_messages').delete().eq('id', id);
+    loadAdminTickets();
   };
 
   const progressPercent = useMemo(() => Math.round(((quizIndex + 1) / quizOrder.length) * 100), [quizIndex, quizOrder.length]);
@@ -1445,6 +1557,46 @@ export default function App() {
                           ))}
                         </div>
                       </section>
+
+                      <section className="bg-slate-950 border border-rose-500/30 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-bold text-rose-400">📨 Hộp thư hỗ trợ ({adminTickets.length})</h3>
+                          <span className="text-[10px] text-amber-400 font-bold">Mới: {adminTickets.filter(t => t.status === 'open').length}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500">Tin nhắn từ người dùng khi AI không xử lý được. Trả lời để người dùng nhận ngay trong bong bóng chat.</p>
+                        <div className="space-y-2 max-h-[520px] overflow-y-auto">
+                          {adminTickets.length === 0 && <div className="text-xs text-slate-500 italic p-3">Chưa có tin nhắn nào.</div>}
+                          {adminTickets.map(t => (
+                            <div key={t.id} className={`p-3 rounded-xl border ${t.status === 'open' ? 'border-rose-500/40 bg-rose-500/5' : 'border-slate-800 bg-slate-900'}`}>
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="text-xs">
+                                  <span className="font-bold text-slate-100">{t.real_name || t.username}</span>
+                                  <span className="text-slate-500"> @{t.username}</span>
+                                  <span className={`ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded ${t.status === 'open' ? 'bg-rose-500 text-slate-950' : 'bg-emerald-500/20 text-emerald-400'}`}>{t.status === 'open' ? 'MỚI' : 'ĐÃ TRẢ LỜI'}</span>
+                                </div>
+                                <button onClick={() => handleDeleteTicket(t.id)} className="text-rose-400 text-[10px] font-bold">Xoá</button>
+                              </div>
+                              <div className="text-[10px] text-slate-500 mb-1">{new Date(t.created_at).toLocaleString('vi-VN')}</div>
+                              <div className="text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded p-2 whitespace-pre-wrap">{t.message}</div>
+                              {t.reply && (
+                                <div className="mt-2 text-xs text-emerald-300 bg-emerald-500/5 border border-emerald-500/30 rounded p-2 whitespace-pre-wrap">
+                                  <span className="text-[10px] font-bold text-emerald-400">↳ Phản hồi:</span> {t.reply}
+                                </div>
+                              )}
+                              <div className="mt-2 flex gap-2">
+                                <textarea
+                                  value={adminReplyDraft[t.id] || ''}
+                                  onChange={(e) => setAdminReplyDraft(prev => ({ ...prev, [t.id]: e.target.value }))}
+                                  placeholder={t.reply ? 'Cập nhật phản hồi…' : 'Nhập phản hồi cho người dùng…'}
+                                  rows={2}
+                                  className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-slate-100"
+                                />
+                                <button onClick={() => handleAdminReply(t)} className="px-3 py-1.5 bg-emerald-500 text-slate-950 text-xs font-bold rounded self-end">Gửi</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     </div>
                   )}
                 </div>
@@ -1530,6 +1682,104 @@ export default function App() {
               })()}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 🆘 BONG BÓNG HỖ TRỢ AI + NHẮN ADMIN */}
+      <button
+        onClick={() => setSupportOpen(v => !v)}
+        className="fixed bottom-5 right-5 z-[90] w-14 h-14 rounded-full bg-gradient-to-br from-teal-400 to-indigo-500 text-slate-950 text-2xl shadow-2xl shadow-teal-500/30 hover:scale-110 transition-transform flex items-center justify-center"
+        aria-label="Mở hỗ trợ"
+        title="Hỗ trợ AI / Nhắn Admin"
+      >
+        {supportOpen ? '✕' : '💬'}
+        {!supportOpen && myTickets.some(t => t.status === 'answered' && t.reply) && (
+          <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">!</span>
+        )}
+      </button>
+      {supportOpen && (
+        <div className="fixed bottom-24 right-5 z-[95] w-[92vw] max-w-sm h-[70vh] max-h-[560px] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-800 bg-slate-950 flex items-center gap-1">
+            <button onClick={() => setSupportMode('ai')} className={`flex-1 px-2 py-1.5 rounded-lg text-[11px] font-bold ${supportMode==='ai' ? 'bg-teal-500 text-slate-950' : 'text-slate-400'}`}>🤖 AI Hỗ Trợ</button>
+            <button onClick={() => setSupportMode('admin')} className={`flex-1 px-2 py-1.5 rounded-lg text-[11px] font-bold ${supportMode==='admin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400'}`}>
+              📨 Nhắn Admin
+              {myTickets.some(t => t.status === 'answered' && t.reply) && <span className="ml-1 inline-block w-1.5 h-1.5 bg-rose-500 rounded-full" />}
+            </button>
+          </div>
+
+          {supportMode === 'ai' && (
+            <>
+              <div ref={supportScrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+                {supportMessages.length === 0 && (
+                  <div className="text-slate-400 leading-relaxed p-2">
+                    👋 Xin chào! Mình là <b className="text-teal-400">BIOSEA SUPPORT</b>. Mô tả lỗi/khó khăn bạn đang gặp khi dùng app, mình sẽ hướng dẫn ngay.
+                    <div className="mt-2 text-[10px] text-slate-500 italic">Nếu vấn đề vượt quyền hạn AI, chuyển sang tab <b className="text-amber-400">📨 Nhắn Admin</b>.</div>
+                  </div>
+                )}
+                {supportMessages.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[88%] rounded-xl p-2.5 ${m.role === 'user' ? 'bg-teal-500 text-slate-950 font-bold whitespace-pre-wrap' : 'bg-slate-950 border border-slate-800 text-slate-200'}`}>
+                      {m.role === 'user' ? m.text : (
+                        <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-li:my-0">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text || '…'}</ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={handleSupportAi} className="p-2 border-t border-slate-800 flex gap-2">
+                <input
+                  value={supportInput}
+                  onChange={(e) => setSupportInput(e.target.value)}
+                  placeholder="Mô tả lỗi bạn đang gặp…"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100"
+                />
+                <button type="submit" disabled={supportLoading || !supportInput.trim()} className="px-3 py-2 bg-teal-500 text-slate-950 text-xs font-bold rounded-lg disabled:opacity-40">
+                  {supportLoading ? '…' : 'Gửi'}
+                </button>
+              </form>
+            </>
+          )}
+
+          {supportMode === 'admin' && (
+            <>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+                <div className="text-[11px] text-slate-400 bg-amber-500/5 border border-amber-500/30 rounded-lg p-2">
+                  📨 Gửi trực tiếp cho Quản trị viên. Dùng khi AI không xử lý được (khôi phục mật khẩu, lỗi dữ liệu, khiếu nại điểm…).
+                </div>
+                {myTickets.length === 0 && <div className="text-slate-500 italic p-2">Bạn chưa gửi tin nhắn nào cho Admin.</div>}
+                {myTickets.map(t => (
+                  <div key={t.id} className="space-y-1">
+                    <div className="flex justify-end">
+                      <div className="max-w-[88%] rounded-xl p-2.5 bg-amber-500 text-slate-950 font-bold whitespace-pre-wrap">{t.message}</div>
+                    </div>
+                    <div className="text-[9px] text-slate-500 text-right">{new Date(t.created_at).toLocaleString('vi-VN')} · {t.status === 'open' ? '⏳ Chờ Admin' : '✅ Đã trả lời'}</div>
+                    {t.reply && (
+                      <div className="flex justify-start">
+                        <div className="max-w-[88%] rounded-xl p-2.5 bg-slate-950 border border-emerald-500/40 text-emerald-200 whitespace-pre-wrap">
+                          <div className="text-[9px] font-bold text-emerald-400 mb-1">🛡️ ADMIN trả lời:</div>
+                          {t.reply}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {supportSentMsg && <div className="px-3 py-1 text-[11px] text-emerald-400 bg-emerald-500/5 border-t border-emerald-500/20">{supportSentMsg}</div>}
+              <form onSubmit={handleSendToAdmin} className="p-2 border-t border-slate-800 flex gap-2">
+                <input
+                  value={supportInput}
+                  onChange={(e) => setSupportInput(e.target.value)}
+                  placeholder="Tin nhắn gửi Admin…"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100"
+                />
+                <button type="submit" disabled={supportLoading || !supportInput.trim()} className="px-3 py-2 bg-amber-500 text-slate-950 text-xs font-bold rounded-lg disabled:opacity-40">
+                  Gửi
+                </button>
+              </form>
+            </>
+          )}
         </div>
       )}
     </div>
