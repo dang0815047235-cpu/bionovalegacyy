@@ -263,27 +263,64 @@ const ADMIN_BADGES_LIST = [
   { id: 'a5', name: '🔱 Quyền Trượng Di Truyền', desc: 'Quyền lực tuyệt đối với mọi học viên', icon: '🔱' }
 ];
 
-// 🏅 HỆ THỐNG 15 DANH HIỆU NÂNG CẤP THEO TIẾN TRÌNH ĐIỂM
+// 🏅 HỆ THỐNG ~45 DANH HIỆU NÂNG CẤP THEO TIẾN TRÌNH ĐIỂM
+// Sắp xếp theo `min` tăng dần — GET_TITLE_BY_SCORE chọn danh hiệu có min cao nhất ≤ score.
+const TITLES_LIST = [
+  { min: 0,  name: "🥚 Tế Bào Sơ Cấp",          desc: "Chưa làm bài — khởi đầu hành trình" },
+  { min: 1,  name: "🌱 Hợp Tử Sơ Sinh",         desc: "Đạt 1+ câu đúng" },
+  { min: 3,  name: "🪺 Phôi Mầm Bionova",       desc: "Đạt 3+ câu đúng" },
+  { min: 6,  name: "🔬 Tập Sự Kính Hiển Vi",    desc: "Đạt 6+ câu đúng" },
+  { min: 9,  name: "🧫 Nhà Quan Sát Tế Bào",    desc: "Đạt 9+ câu đúng" },
+  { min: 12, name: "🌿 Mầm Sống Pha G1",        desc: "Đạt 12+ câu đúng" },
+  { min: 15, name: "🧪 Thực Tập Sinh Phòng Lab",desc: "Đạt 15+ câu đúng" },
+  { min: 18, name: "🧬 Thợ Săn Pha S",          desc: "Đạt 18+ câu đúng" },
+  { min: 22, name: "🧠 Học Viên Sinh Học",      desc: "Đạt 22+ câu đúng" },
+  { min: 25, name: "⏳ Trùm Cuối Pha G2",       desc: "Đạt 25+ câu đúng" },
+  { min: 28, name: "🛰️ Trinh Sát ADN",          desc: "Đạt 28+ câu đúng" },
+  { min: 32, name: "🚦 Trưởng Tháp Checkpoint", desc: "Đạt 32+ câu đúng" },
+  { min: 35, name: "🧱 Kiến Tạo Vi Quản",       desc: "Đạt 35+ câu đúng" },
+  { min: 38, name: "🌀 Tiền Bối Kì Đầu",        desc: "Đạt 38+ câu đúng" },
+  { min: 40, name: "💠 Chuyên Gia Nguyên Phân", desc: "Đạt 40+ câu đúng" },
+  { min: 42, name: "🪞 Người Nhân Đôi NST",     desc: "Đạt 42+ câu đúng" },
+  { min: 45, name: "🏛️ Trưởng Lão Tế Bào Chất", desc: "Đạt 45+ câu đúng" },
+  { min: 48, name: "🧬 Kĩ Sư Trao Đổi Chéo",    desc: "Đạt 48+ câu đúng" },
+  { min: 50, name: "🎯 Xạ Thủ Tâm Động",        desc: "Đạt 50+ câu đúng" },
+  { min: 52, name: "📜 Học Sĩ Di Truyền",       desc: "Đạt 52+ câu đúng" },
+  { min: 55, name: "🔮 Chỉ Huy Kì Giữa II",     desc: "Đạt 55+ câu đúng" },
+  { min: 58, name: "🦋 Vũ Công Thoi Phân Bào",  desc: "Đạt 58+ câu đúng" },
+  { min: 60, name: "🏆 Đại Sứ Chromatid",       desc: "Đạt 60+ câu đúng" },
+  { min: 62, name: "🏹 Chiến Binh Kì Sau II",   desc: "Đạt 62+ câu đúng" },
+  { min: 64, name: "🪐 Nhà Du Hành Nhân Tế Bào",desc: "Đạt 64+ câu đúng" },
+  { min: 66, name: "🛡️ Vệ Sĩ Bộ Gen",           desc: "Đạt 66+ câu đúng" },
+  { min: 68, name: "🌌 Du Tử Vũ Trụ ADN",       desc: "Đạt 68+ câu đúng" },
+  { min: 70, name: "⚡ Đột Phá Giảm Phân",       desc: "Đạt 70+ câu đúng" },
+  { min: 72, name: "🦴 Bậc Thầy Phân Đôi",      desc: "Đạt 72+ câu đúng" },
+  { min: 74, name: "🧙 Pháp Sư Sinh Học",       desc: "Đạt 74+ câu đúng" },
+  { min: 76, name: "🔱 Chúa Tể Kì Cuối",        desc: "Đạt 76+ câu đúng" },
+  { min: 78, name: "🌟 Giáo Sư Phân Bào",        desc: "Đạt 78+ câu đúng" },
+  { min: 80, name: "🎓 Tiến Sĩ Tế Bào Học",     desc: "Đạt 80+ câu đúng" },
+  { min: 82, name: "🪄 Phù Thủy Crossing-Over", desc: "Đạt 82+ câu đúng" },
+  { min: 84, name: "🦅 Đại Bàng Nhiễm Sắc",     desc: "Đạt 84+ câu đúng" },
+  { min: 85, name: "🪐 Học Giả Tế Bào Học",     desc: "Đạt 85+ câu đúng" },
+  { min: 86, name: "🐉 Long Vương Giảm Phân",   desc: "Đạt 86+ câu đúng" },
+  { min: 87, name: "💫 Tinh Linh Bionova",      desc: "Đạt 87+ câu đúng" },
+  { min: 88, name: "🌠 Sao Băng Di Truyền",     desc: "Đạt 88+ câu đúng" },
+  { min: 89, name: "🏵️ Đại Hiền Triết Sinh Học",desc: "Đạt 89+ câu đúng" },
+  { min: 90, name: "👑 Đại Đế Di Truyền",        desc: "Đạt tối đa 90/90 — đỉnh cao Bionova" },
+];
+
 const GET_TITLE_BY_SCORE = (score) => {
-  if (score >= 90) return "👑 Đại Đế Di Truyền";
-  if (score >= 85) return "🪐 Học Giả Tế Bào Học";
-  if (score >= 78) return "🌟 Giáo Sư Phân Bào";
-  if (score >= 70) return "⚡ Đột Phá Giảm Phân";
-  if (score >= 62) return "🏹 Chiến Binh Kì Sau II";
-  if (score >= 55) return "🔮 Chỉ Huy Kì Giữa II";
-  if (score >= 48) return "🧬 Kĩ Sư Trao Đổi Chéo";
-  if (score >= 40) return "💠 Chuyên Gia Nguyên Phân";
-  if (score >= 32) return "🚦 Trưởng Tháp Checkpoint";
-  if (score >= 25) return "⏳ Trùm Cuối Pha G2";
-  if (score >= 18) return "🧬 Thợ Săn Pha S";
-  if (score >= 12) return "🌿 Mầm Sống Pha G1";
-  if (score >= 6) return "🔬 Tập Sự Kính Hiển Vi";
-  if (score >= 1) return "🌱 Hợp Tử Sơ Sinh";
-  return "🥚 Tế Bào Sơ Cấp";
+  let result = TITLES_LIST[0].name;
+  for (const t of TITLES_LIST) {
+    if (score >= t.min) result = t.name;
+    else break;
+  }
+  return result;
 };
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('concepts');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [bgVolume, setBgVolume] = useState(25); 
   const audioElRef = useRef(null);
@@ -1058,6 +1095,15 @@ export default function App() {
       {/* HEADER */}
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setMenuOpen(v => !v)}
+            aria-label="Mở menu"
+            className="relative w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-teal-400 transition-all"
+          >
+            <span className={`block h-0.5 w-5 bg-teal-400 transition-transform ${menuOpen ? 'translate-y-2 rotate-45' : ''}`}></span>
+            <span className={`block h-0.5 w-5 bg-teal-400 transition-opacity ${menuOpen ? 'opacity-0' : ''}`}></span>
+            <span className={`block h-0.5 w-5 bg-teal-400 transition-transform ${menuOpen ? '-translate-y-2 -rotate-45' : ''}`}></span>
+          </button>
           <img
             src={brandAsset.url}
             alt="BIONOVA LEGACY"
@@ -1082,16 +1128,49 @@ export default function App() {
         </div>
       </header>
 
-      {/* TABS MENU */}
-      <nav className="bg-slate-900 border-b border-slate-800 flex justify-center flex-wrap gap-1 p-2">
-        <button onClick={() => setActiveTab('concepts')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'concepts' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>📚 Khái Niệm</button>
-        <button onClick={() => setActiveTab('videos')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'videos' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🎥 Thư Viện Video ({allVideos.length})</button>
-        <button onClick={() => setActiveTab('quiz')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'quiz' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>✍️ Trắc Nghiệm (90 Câu)</button>
-        <button onClick={() => setActiveTab('leaderboard')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🏆 Bảng Xếp Hạng</button>
-        <button onClick={() => setActiveTab('settings')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'settings' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>⚙️ Thành Tích ({isAdmin ? `${BADGES_LIST.length + ADMIN_BADGES_LIST.length}/${BADGES_LIST.length + ADMIN_BADGES_LIST.length}` : `${currentUser?.badges?.length || 0}/${BADGES_LIST.length}`})</button>
-        <button onClick={() => setActiveTab('ai-chat')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'ai-chat' ? 'bg-teal-500 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'}`}>🤖 BIOSEA AI</button>
-        <button onClick={() => setActiveTab('admin')} className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'}`}>🔐 Admin</button>
-      </nav>
+      {/* OFF-CANVAS MENU (mở từ nút 3 gạch) */}
+      {menuOpen && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-40"
+            onClick={() => setMenuOpen(false)}
+          />
+          <aside className="fixed top-0 left-0 h-full w-72 bg-slate-900 border-r border-slate-800 z-50 p-4 shadow-2xl flex flex-col gap-2 overflow-y-auto">
+            <div className="flex items-center justify-between mb-2 pb-3 border-b border-slate-800">
+              <h2 className="text-sm font-bold text-teal-400">📂 Khu Vực Bionova</h2>
+              <button onClick={() => setMenuOpen(false)} className="text-slate-400 hover:text-rose-400 text-lg leading-none">✕</button>
+            </div>
+            {[
+              { id: 'concepts',    label: '📚 Khái Niệm',                       color: 'teal' },
+              { id: 'videos',      label: `🎥 Thư Viện Video (${allVideos.length})`, color: 'teal' },
+              { id: 'quiz',        label: '✍️ Trắc Nghiệm (90 Câu)',             color: 'teal' },
+              { id: 'leaderboard', label: '🏆 Bảng Xếp Hạng',                    color: 'teal' },
+              { id: 'settings',    label: `⚙️ Thành Tích (${isAdmin ? `${BADGES_LIST.length + ADMIN_BADGES_LIST.length}/${BADGES_LIST.length + ADMIN_BADGES_LIST.length}` : `${currentUser?.badges?.length || 0}/${BADGES_LIST.length}`})`, color: 'indigo' },
+              { id: 'ai-chat',     label: '🤖 BIOSEA AI',                        color: 'teal' },
+              ...(isAdmin ? [{ id: 'admin', label: '🔐 Admin', color: 'amber' }] : []),
+            ].map((it) => {
+              const active = activeTab === it.id;
+              const activeCls = it.color === 'amber'
+                ? 'bg-amber-500 text-slate-950'
+                : it.color === 'indigo'
+                ? 'bg-indigo-500 text-white'
+                : 'bg-teal-500 text-slate-950';
+              return (
+                <button
+                  key={it.id}
+                  onClick={() => { setActiveTab(it.id); setMenuOpen(false); }}
+                  className={`text-left px-4 py-3 rounded-xl text-sm font-bold transition-all ${active ? `${activeCls} shadow` : 'text-slate-300 hover:bg-slate-800'}`}
+                >
+                  {it.label}
+                </button>
+              );
+            })}
+            <p className="mt-auto pt-4 text-[10px] text-slate-500 italic border-t border-slate-800">
+              🌊 BIONOVA LEGACY • Khám phá đại dương sinh học
+            </p>
+          </aside>
+        </>
+      )}
 
       {/* MAIN LAYOUT */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1453,6 +1532,36 @@ export default function App() {
                               <p className="text-[11px] text-slate-400 mt-0.5">{badge.desc}</p>
                             </div>
                             {isAdminBadge ? <span className="ml-auto text-[9px] bg-amber-500/20 text-amber-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Admin</span> : hasBadge ? <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Đã mở</span> : <span className="ml-auto text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* KHO DANH HIỆU (~45) — Admin tự động unlock tất cả */}
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <h3 className="text-base font-bold text-slate-100 border-b border-slate-800 pb-3 mb-4">
+                      🎖️ Kho Danh Hiệu Bionova ({TITLES_LIST.length}) {isAdmin && <span className="text-amber-400">— Admin đã mở khoá toàn bộ</span>}
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                      {TITLES_LIST.map((t) => {
+                        const userScore = currentUser?.score || 0;
+                        const unlocked = isAdmin || userScore >= t.min;
+                        const current = (currentUser?.title === t.name);
+                        return (
+                          <div key={t.name} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${current ? 'border-amber-400 bg-amber-500/[0.06]' : unlocked ? 'border-teal-500/40' : 'border-slate-900 opacity-40'}`}>
+                            <div className="text-[10px] font-extrabold w-10 text-center text-slate-500">{t.min}+</div>
+                            <div className="flex-1">
+                              <p className="font-bold text-slate-200">{t.name}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{t.desc}</p>
+                            </div>
+                            {current ? (
+                              <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded uppercase">Hiện tại</span>
+                            ) : unlocked ? (
+                              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">{isAdmin ? 'Admin' : 'Đã mở'}</span>
+                            ) : (
+                              <span className="text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>
+                            )}
                           </div>
                         );
                       })}
