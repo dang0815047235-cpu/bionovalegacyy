@@ -708,8 +708,12 @@ export default function App() {
     if (finalScore >= 90) updatedBadges.push('👑');
     if (currentUser.badges.includes('📡')) updatedBadges.push('📡'); // Bảo lưu nhạc nền nếu có
 
-    const newTitle = GET_TITLE_BY_SCORE(finalScore);
+    const autoTitle = GET_TITLE_BY_SCORE(finalScore);
     const maxScore = Math.max(currentUser.score, finalScore);
+    // Nếu user đã tự chọn danh hiệu thì giữ nguyên, không auto-overwrite
+    const titleChosen = typeof window !== 'undefined' && localStorage.getItem('biotech_title_chosen_' + currentUser.id) === '1';
+    const chosenStillValid = titleChosen && (isAdmin || (TITLES_LIST.find(t => t.name === currentUser.title)?.min ?? 0) <= maxScore);
+    const newTitle = chosenStillValid ? currentUser.title : autoTitle;
 
     const updatedUser = { ...currentUser, score: maxScore, title: newTitle, badges: updatedBadges };
     setCurrentUser(updatedUser);
@@ -735,6 +739,25 @@ export default function App() {
     }
     // Tự động gọi AI giải thích sau khi trả lời
     handleAiExplainQuiz(option, correct);
+  };
+
+  // Cho phép người dùng (và admin) chọn danh hiệu hiển thị
+  const handleSelectTitle = async (titleName) => {
+    if (!currentUser) return;
+    const t = TITLES_LIST.find(x => x.name === titleName);
+    if (!t) return;
+    if (!isAdmin && (currentUser.score || 0) < t.min) {
+      alert(`🔒 Bạn cần đạt ${t.min}+ điểm để mở khoá danh hiệu này.`);
+      return;
+    }
+    const updatedUser = { ...currentUser, title: titleName };
+    setCurrentUser(updatedUser);
+    localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
+    localStorage.setItem('biotech_title_chosen_' + currentUser.id, '1');
+    await supabase.from('accounts')
+      .update({ title: titleName, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id);
+    loadLeaderboard();
   };
 
   // =================== ADMIN FUNCTIONS ===================
@@ -1145,7 +1168,12 @@ export default function App() {
               { id: 'videos',      label: `🎥 Thư Viện Video (${allVideos.length})`, color: 'teal' },
               { id: 'quiz',        label: '✍️ Trắc Nghiệm (90 Câu)',             color: 'teal' },
               { id: 'leaderboard', label: '🏆 Bảng Xếp Hạng',                    color: 'teal' },
-              { id: 'settings',    label: `⚙️ Thành Tích (${isAdmin ? `${BADGES_LIST.length + ADMIN_BADGES_LIST.length}/${BADGES_LIST.length + ADMIN_BADGES_LIST.length}` : `${currentUser?.badges?.length || 0}/${BADGES_LIST.length}`})`, color: 'indigo' },
+              { id: 'settings',    label: (() => {
+                  const totalAll = BADGES_LIST.length + TITLES_LIST.length + (isAdmin ? ADMIN_BADGES_LIST.length : 0);
+                  const unlockedTitles = isAdmin ? TITLES_LIST.length : TITLES_LIST.filter(t => (currentUser?.score || 0) >= t.min).length;
+                  const unlockedBadges = isAdmin ? (BADGES_LIST.length + ADMIN_BADGES_LIST.length) : (currentUser?.badges?.length || 0);
+                  return `⚙️ Thành Tích (${unlockedBadges + unlockedTitles}/${totalAll})`;
+                })(), color: 'indigo' },
               { id: 'ai-chat',     label: '🤖 BIOSEA AI',                        color: 'teal' },
               ...(isAdmin ? [{ id: 'admin', label: '🔐 Admin', color: 'amber' }] : []),
             ].map((it) => {
@@ -1543,13 +1571,20 @@ export default function App() {
                     <h3 className="text-base font-bold text-slate-100 border-b border-slate-800 pb-3 mb-4">
                       🎖️ Kho Danh Hiệu Bionova ({TITLES_LIST.length}) {isAdmin && <span className="text-amber-400">— Admin đã mở khoá toàn bộ</span>}
                     </h3>
+                    <p className="text-[11px] text-slate-400 mb-3">👉 Bấm vào một danh hiệu đã mở khoá để gắn hiển thị dưới tên & trên Bảng Xếp Hạng.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                       {TITLES_LIST.map((t) => {
                         const userScore = currentUser?.score || 0;
                         const unlocked = isAdmin || userScore >= t.min;
                         const current = (currentUser?.title === t.name);
                         return (
-                          <div key={t.name} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${current ? 'border-amber-400 bg-amber-500/[0.06]' : unlocked ? 'border-teal-500/40' : 'border-slate-900 opacity-40'}`}>
+                          <button
+                            type="button"
+                            key={t.name}
+                            disabled={!unlocked || current}
+                            onClick={() => handleSelectTitle(t.name)}
+                            className={`text-left p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${current ? 'border-amber-400 bg-amber-500/[0.06] cursor-default' : unlocked ? 'border-teal-500/40 hover:border-teal-400 hover:bg-teal-500/[0.06] cursor-pointer' : 'border-slate-900 opacity-40 cursor-not-allowed'}`}
+                          >
                             <div className="text-[10px] font-extrabold w-10 text-center text-slate-500">{t.min}+</div>
                             <div className="flex-1">
                               <p className="font-bold text-slate-200">{t.name}</p>
@@ -1558,11 +1593,11 @@ export default function App() {
                             {current ? (
                               <span className="text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded uppercase">Hiện tại</span>
                             ) : unlocked ? (
-                              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">{isAdmin ? 'Admin' : 'Đã mở'}</span>
+                              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Chọn</span>
                             ) : (
                               <span className="text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>
                             )}
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
