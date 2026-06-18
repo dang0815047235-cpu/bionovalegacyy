@@ -322,7 +322,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('concepts');
   const [menuOpen, setMenuOpen] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [bgVolume, setBgVolume] = useState(25); 
+  const [bgVolume, setBgVolume] = useState(60);
   const audioElRef = useRef(null);
 
   const [themeStyle, setThemeStyle] = useState('slate'); 
@@ -563,6 +563,27 @@ export default function App() {
     if (audioElRef.current) audioElRef.current.volume = bgVolume / 100;
   }, [bgVolume]);
 
+  // 🛑 Dừng nhạc khi rời/ẩn trang hoặc unmount để không phát "lén" nền
+  useEffect(() => {
+    const stopAudio = () => {
+      const el = audioElRef.current;
+      if (el && !el.paused) {
+        try { el.pause(); } catch (_) {}
+      }
+      setIsPlayingAudio(false);
+    };
+    const onVis = () => { if (document.visibilityState === 'hidden') stopAudio(); };
+    window.addEventListener('pagehide', stopAudio);
+    window.addEventListener('beforeunload', stopAudio);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', stopAudio);
+      window.removeEventListener('beforeunload', stopAudio);
+      document.removeEventListener('visibilitychange', onVis);
+      stopAudio();
+    };
+  }, []);
+
   // Đăng ký / Đăng nhập (đồng bộ Supabase)
   const handleAuth = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -638,6 +659,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (!window.confirm('Bạn có chắc chắn muốn đăng xuất khỏi BIONOVA LEGACY không?')) return;
     localStorage.removeItem('biotech_current_user');
     setCurrentUser(null);
     setIsLoggedIn(false);
@@ -756,6 +778,22 @@ export default function App() {
     localStorage.setItem('biotech_title_chosen_' + currentUser.id, '1');
     await supabase.from('accounts')
       .update({ title: titleName, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id);
+    loadLeaderboard();
+  };
+
+  // Cho phép chọn HUY HIỆU đã mở khoá làm danh hiệu hiển thị dưới tên
+  const handleSelectBadgeAsTitle = async (badge) => {
+    if (!currentUser) return;
+    const isAdminBadge = ADMIN_BADGES_LIST.some(b => b.icon === badge.icon);
+    const owned = isAdmin || (!isAdminBadge && currentUser?.badges?.includes(badge.icon));
+    if (!owned) { alert('🔒 Bạn chưa mở khoá huy hiệu này.'); return; }
+    const updatedUser = { ...currentUser, title: badge.name };
+    setCurrentUser(updatedUser);
+    localStorage.setItem('biotech_current_user', JSON.stringify(updatedUser));
+    localStorage.setItem('biotech_title_chosen_' + currentUser.id, '1');
+    await supabase.from('accounts')
+      .update({ title: badge.name, updated_at: new Date().toISOString() })
       .eq('id', currentUser.id);
     loadLeaderboard();
   };
@@ -1146,7 +1184,6 @@ export default function App() {
               <p className="text-xs font-bold text-teal-400">{currentUser?.real_name || currentUser?.username} {isAdmin && <span className="text-[9px] bg-amber-500 text-slate-950 px-1 rounded ml-1">ADMIN</span>}</p>
               <p className="text-[10px] text-amber-400 font-bold">🎖️ {currentUser?.title}</p>
             </div>
-            <button onClick={handleLogout} className="text-[10px] bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-slate-950 px-2 py-1 rounded font-bold transition-all">Đăng xuất</button>
           </div>
         </div>
       </header>
@@ -1155,10 +1192,10 @@ export default function App() {
       {menuOpen && (
         <>
           <div
-            className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-40"
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-40 animate-in fade-in duration-200"
             onClick={() => setMenuOpen(false)}
           />
-          <aside className="fixed top-0 left-0 h-full w-72 bg-slate-900 border-r border-slate-800 z-50 p-4 shadow-2xl flex flex-col gap-2 overflow-y-auto">
+          <aside className="fixed top-0 left-0 h-full w-72 bg-slate-900 border-r border-slate-800 z-50 p-4 shadow-2xl flex flex-col gap-2 overflow-y-auto animate-in slide-in-from-left duration-300">
             <div className="flex items-center justify-between mb-2 pb-3 border-b border-slate-800">
               <h2 className="text-sm font-bold text-teal-400">📂 Khu Vực Bionova</h2>
               <button onClick={() => setMenuOpen(false)} className="text-slate-400 hover:text-rose-400 text-lg leading-none">✕</button>
@@ -1205,7 +1242,7 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* KHU VỰC CHÍNH ĐƯỢC CHỌN TỪ CÁC TAB */}
-        <div className="lg:col-span-2 space-y-6">
+        <div key={activeTab} className="lg:col-span-2 space-y-6 animate-in fade-in slide-in-from-bottom-3 duration-300">
 
             <>
               {/* TAB 1: KHÁM PHÁ KIẾN THỨC NÂNG CẤP CHỮ TO & XEM CHI TIẾT */}
@@ -1476,6 +1513,7 @@ export default function App() {
                     <h3 className="text-base font-bold text-slate-100 border-b border-slate-800 pb-3 mb-4">
                       🏅 Đại Kho Tàng Huy Hiệu Thành Tích {isAdmin && <span className="text-amber-400">+ Đặc Quyền Admin</span>}
                     </h3>
+                    <p className="text-[11px] text-slate-400 mb-3">👉 Bấm vào một huy hiệu đã mở khoá để gắn làm danh hiệu hiển thị dưới tên & trên Bảng Xếp Hạng.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       {[...BADGES_LIST, ...(isAdmin ? ADMIN_BADGES_LIST : [])].map((badge) => {
                         const isAdminBadge = ADMIN_BADGES_LIST.some(b => b.icon === badge.icon);
@@ -1483,15 +1521,28 @@ export default function App() {
                         const hasBadge = isAdmin
                           ? true
                           : (isAdminBadge ? false : !!currentUser?.badges?.includes(badge.icon));
+                        const currentTitle = currentUser?.title === badge.name;
                         return (
-                          <div key={badge.id} className={`p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all ${isAdminBadge ? 'border-amber-500/50 bg-amber-500/[0.04]' : hasBadge ? 'border-teal-500/40 bg-teal-500/[0.02]' : 'border-slate-900 opacity-30'}`}>
+                          <button
+                            type="button"
+                            key={badge.id}
+                            disabled={!hasBadge || currentTitle}
+                            onClick={() => handleSelectBadgeAsTitle(badge)}
+                            className={`text-left w-full p-3 rounded-xl border flex items-center gap-3 bg-slate-950 transition-all duration-300 ${currentTitle ? 'border-amber-400 bg-amber-500/[0.08] cursor-default' : hasBadge ? 'border-teal-500/40 hover:border-teal-400 hover:bg-teal-500/[0.06] hover:scale-[1.02] cursor-pointer' : 'border-slate-900 opacity-30 cursor-not-allowed'}`}
+                          >
                             <div className="text-2xl">{badge.icon}</div>
                             <div>
                               <p className="font-bold text-slate-200">{badge.name}</p>
                               <p className="text-[11px] text-slate-400 mt-0.5">{badge.desc}</p>
                             </div>
-                            {isAdminBadge ? <span className="ml-auto text-[9px] bg-amber-500/20 text-amber-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Admin</span> : hasBadge ? <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Đã mở</span> : <span className="ml-auto text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>}
-                          </div>
+                            {currentTitle ? (
+                              <span className="ml-auto text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.5 rounded uppercase">Hiện tại</span>
+                            ) : hasBadge ? (
+                              <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded uppercase">Chọn</span>
+                            ) : (
+                              <span className="ml-auto text-[9px] bg-slate-800 text-slate-500 font-medium px-1.5 py-0.5 rounded">Khóa</span>
+                            )}
+                          </button>
                         );
                       })}
                     </div>
@@ -1537,7 +1588,7 @@ export default function App() {
               )}
 
               {activeTab === 'config' && (
-                <div className="space-y-6">
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                       <h3 className="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2">👤 Quản Lý Định Danh</h3>
@@ -1571,6 +1622,13 @@ export default function App() {
                         <button onClick={() => setThemeStyle('ocean')} className={`p-2 rounded-lg border ${themeStyle === 'ocean' ? 'bg-blue-700 text-blue-100 border-blue-500' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Đại dương</button>
                         <button onClick={() => setThemeStyle('emerald')} className={`p-2 rounded-lg border ${themeStyle === 'emerald' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>Lục bảo</button>
                       </div>
+                    </div>
+                    <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-5 space-y-3 md:col-span-2">
+                      <h3 className="text-sm font-bold text-rose-300 border-b border-rose-500/20 pb-2">🚪 Phiên Đăng Nhập</h3>
+                      <p className="text-[11px] text-slate-400">Đăng xuất khỏi tài khoản <b className="text-teal-400">@{currentUser?.username}</b> trên thiết bị này. Tiến trình điểm số vẫn được lưu trên máy chủ.</p>
+                      <button onClick={handleLogout} className="w-full p-2.5 rounded-xl text-xs font-bold bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-slate-950 border border-rose-500/30 transition-all">
+                        🚪 Đăng xuất khỏi BIONOVA LEGACY
+                      </button>
                     </div>
                   </div>
                 </div>
