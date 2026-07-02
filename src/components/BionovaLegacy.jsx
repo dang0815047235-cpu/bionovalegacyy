@@ -337,6 +337,22 @@ export default function App() {
   const [realNameInput, setRealNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  // Forgot password flow
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1: nhập email, 2: nhập OTP + mật khẩu mới
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPwd, setForgotNewPwd] = useState('');
+  const [forgotMsg, setForgotMsg] = useState(null); // {type, text}
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotDevOtp, setForgotDevOtp] = useState(''); // hiển thị nếu chưa gửi email
+  // Nhắc bổ sung email cho tài khoản cũ
+  const [emailPromptOpen, setEmailPromptOpen] = useState(false);
+  const [emailPromptValue, setEmailPromptValue] = useState('');
+  const [emailPromptMsg, setEmailPromptMsg] = useState(null);
+  // Quiz: khoá trả lời khi đã nhờ AI giải
+  const [aiSolveUsed, setAiSolveUsed] = useState(false);
   const [accountsList, setAccountsList] = useState([]);
   const [pwdOld, setPwdOld] = useState('');
   const [pwdNew, setPwdNew] = useState('');
@@ -621,8 +637,10 @@ export default function App() {
       if (!realName) { setAuthError('Vui lòng nhập tên thật'); return; }
       if (pwd.length < 6) { setAuthError('Mật khẩu tối thiểu 6 ký tự'); return; }
       if (!/^[a-z0-9_]{3,24}$/.test(uname)) { setAuthError('Username 3-24 ký tự (chữ thường, số, _)'); return; }
+      const email = emailInput.trim().toLowerCase();
+      if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setAuthError('Email không hợp lệ (bắt buộc để lấy lại mật khẩu)'); return; }
       const { data: inserted, error } = await supabase.rpc('register_account', {
-        p_username: uname, p_real_name: realName, p_password: pwd,
+        p_username: uname, p_real_name: realName, p_password: pwd, p_email: email,
       });
       if (error) { setAuthError('Đăng ký lỗi: ' + error.message); return; }
       const user = { ...inserted, badges: Array.isArray(inserted.badges) ? inserted.badges : ['🧫'] };
@@ -641,8 +659,75 @@ export default function App() {
       setCurrentUser(user);
       setIsLoggedIn(true);
       clearFail();
+      // Nếu tài khoản cũ chưa có email → nhắc bổ sung
+      if (!user.email) {
+        setEmailPromptValue('');
+        setEmailPromptMsg(null);
+        setEmailPromptOpen(true);
+      }
     }
     setPasswordInput('');
+  };
+
+  // ================= QUÊN MẬT KHẨU (OTP qua email) =================
+  const handleRequestOtp = async () => {
+    setForgotMsg(null); setForgotDevOtp('');
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email) { setForgotMsg({ type:'err', text:'Vui lòng nhập email' }); return; }
+    setForgotLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('request_password_reset_otp', { p_email: email });
+      if (error) throw error;
+      // TODO: khi có RESEND_API_KEY, gọi edge function để gửi email thay vì hiển thị dev-mode
+      setForgotDevOtp(String(data || ''));
+      setForgotStep(2);
+      setForgotMsg({ type:'ok', text:'✅ Đã tạo mã OTP. Vui lòng kiểm tra email (hoặc dùng mã dev bên dưới trong khi chưa cấu hình email service).' });
+    } catch (err) {
+      setForgotMsg({ type:'err', text: err?.message || 'Không thể gửi OTP' });
+    } finally { setForgotLoading(false); }
+  };
+  const handleVerifyOtp = async () => {
+    setForgotMsg(null);
+    const otp = forgotOtp.trim();
+    if (!/^\d{6}$/.test(otp)) { setForgotMsg({ type:'err', text:'OTP phải là 6 chữ số' }); return; }
+    if (forgotNewPwd.length < 6) { setForgotMsg({ type:'err', text:'Mật khẩu mới tối thiểu 6 ký tự' }); return; }
+    setForgotLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('verify_otp_and_reset', {
+        p_email: forgotEmail.trim().toLowerCase(), p_otp: otp, p_new_password: forgotNewPwd,
+      });
+      if (error) throw error;
+      if (data === true) {
+        setForgotMsg({ type:'ok', text:'✅ Đổi mật khẩu thành công! Vui lòng đăng nhập lại.' });
+        setTimeout(() => {
+          setForgotOpen(false); setForgotStep(1); setForgotEmail(''); setForgotOtp('');
+          setForgotNewPwd(''); setForgotDevOtp(''); setForgotMsg(null);
+          setAuthMode('login');
+        }, 1500);
+      }
+    } catch (err) {
+      setForgotMsg({ type:'err', text: err?.message || 'Xác thực thất bại' });
+    } finally { setForgotLoading(false); }
+  };
+
+  // Bổ sung email cho tài khoản cũ
+  const handleSetEmail = async () => {
+    setEmailPromptMsg(null);
+    const email = emailPromptValue.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setEmailPromptMsg({ type:'err', text:'Email không hợp lệ' }); return;
+    }
+    try {
+      const { error } = await supabase.rpc('set_account_email', { p_user_id: currentUser.id, p_email: email });
+      if (error) throw error;
+      const updated = { ...currentUser, email };
+      setCurrentUser(updated);
+      localStorage.setItem('biotech_current_user', JSON.stringify(updated));
+      setEmailPromptMsg({ type:'ok', text:'✅ Đã lưu email. Bây giờ bạn có thể lấy lại mật khẩu qua email này.' });
+      setTimeout(() => setEmailPromptOpen(false), 1200);
+    } catch (err) {
+      setEmailPromptMsg({ type:'err', text: err?.message || 'Không lưu được email' });
+    }
   };
 
   const handleUpdateNickname = async (newName) => {
@@ -748,7 +833,7 @@ export default function App() {
   };
 
   const handleOptionSelect = (option) => {
-    if (isAnswered) return;
+    if (isAnswered || aiSolveUsed) return;
     setSelectedAnswer(option);
     setIsAnswered(true);
     const correct = option === quizOrder[quizIndex].answer;
@@ -902,6 +987,7 @@ export default function App() {
       setSelectedAnswer(null);
       setIsAnswered(false);
       setAiQuizHint('');
+      setAiSolveUsed(false);
     } else {
       setQuizComplete(true);
     }
@@ -915,6 +1001,7 @@ export default function App() {
     setScore(0);
     setQuizComplete(false);
     setAiQuizHint('');
+    setAiSolveUsed(false);
   };
 
   // 🧠 AI giải quyết câu hỏi quiz hiện tại
@@ -922,6 +1009,7 @@ export default function App() {
     if (aiQuizLoading) return;
     const q = quizOrder[quizIndex];
     if (!q) return;
+    setAiSolveUsed(true);
     setAiQuizLoading(true);
     setAiQuizHint('');
     try {
@@ -1120,6 +1208,13 @@ export default function App() {
                   className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
               </div>
             )}
+            {authMode === 'register' && (
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Email (dùng để lấy lại mật khẩu)</label>
+                <input type="email" value={emailInput} onChange={(e)=>setEmailInput(e.target.value)} maxLength={80} placeholder="you@example.com"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+              </div>
+            )}
             <div className="space-y-1">
               <label className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider pl-1">Username</label>
               <input type="text" value={usernameInput} onChange={(e)=>setUsernameInput(e.target.value)} maxLength={20} placeholder="username (không dấu)"
@@ -1135,10 +1230,64 @@ export default function App() {
               className="w-full bg-gradient-to-r from-teal-400 to-indigo-500 hover:from-teal-300 hover:to-indigo-400 text-slate-950 font-black text-xs uppercase tracking-wider py-3 rounded-xl shadow-lg">
               {authMode==='register'?'Tạo Tài Khoản & Vào Hệ Thống':'Đăng Nhập'}
             </button>
+            {authMode === 'login' && (
+              <button type="button" onClick={() => { setForgotOpen(true); setForgotStep(1); setForgotMsg(null); setForgotDevOtp(''); }}
+                className="w-full text-[11px] text-teal-400 hover:text-teal-300 font-semibold underline underline-offset-2">
+                Quên mật khẩu?
+              </button>
+            )}
           </form>
           <div className="text-[10px] text-slate-500 font-medium pt-2">
             Hệ thống đồng bộ điểm và bảng xếp hạng theo thời gian thực.
           </div>
+          {/* MODAL QUÊN MẬT KHẨU */}
+          {forgotOpen && (
+            <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl text-left animate-in zoom-in-95">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-teal-400">🔐 Khôi phục mật khẩu</h3>
+                  <button onClick={() => setForgotOpen(false)} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+                </div>
+                {forgotStep === 1 ? (
+                  <>
+                    <p className="text-xs text-slate-400 leading-relaxed">Nhập email đã đăng ký. Chúng tôi sẽ gửi mã OTP 6 chữ số về hộp thư của bạn (hiệu lực 10 phút).</p>
+                    <input type="email" value={forgotEmail} onChange={(e)=>setForgotEmail(e.target.value)} placeholder="you@example.com"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+                    <button onClick={handleRequestOtp} disabled={forgotLoading}
+                      className="w-full bg-gradient-to-r from-teal-400 to-indigo-500 text-slate-950 font-bold text-xs uppercase py-2.5 rounded-xl disabled:opacity-50">
+                      {forgotLoading ? 'Đang gửi...' : 'Gửi mã OTP'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-400">Nhập mã OTP đã nhận và mật khẩu mới.</p>
+                    {forgotDevOtp && (
+                      <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 p-2 rounded-lg">
+                        🧪 <b>Dev mode</b>: Email service chưa cấu hình. Mã OTP của bạn: <code className="font-mono text-base tracking-widest">{forgotDevOtp}</code>
+                      </div>
+                    )}
+                    <input type="text" inputMode="numeric" maxLength={6} value={forgotOtp} onChange={(e)=>setForgotOtp(e.target.value.replace(/\D/g,''))}
+                      placeholder="000000" className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-lg font-mono tracking-[0.5em] text-center text-slate-100 focus:outline-none" />
+                    <input type="password" value={forgotNewPwd} onChange={(e)=>setForgotNewPwd(e.target.value)} placeholder="Mật khẩu mới (≥6 ký tự)"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+                    <div className="flex gap-2">
+                      <button onClick={() => { setForgotStep(1); setForgotOtp(''); setForgotNewPwd(''); setForgotDevOtp(''); setForgotMsg(null); }}
+                        className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 font-bold text-xs py-2.5 rounded-xl">← Gửi lại OTP</button>
+                      <button onClick={handleVerifyOtp} disabled={forgotLoading}
+                        className="flex-1 bg-gradient-to-r from-teal-400 to-indigo-500 text-slate-950 font-bold text-xs uppercase py-2.5 rounded-xl disabled:opacity-50">
+                        {forgotLoading ? 'Đang xác thực...' : 'Đặt lại mật khẩu'}
+                      </button>
+                    </div>
+                  </>
+                )}
+                {forgotMsg && (
+                  <div className={`text-xs p-2 rounded-lg border ${forgotMsg.type==='ok'?'bg-emerald-500/10 border-emerald-500/30 text-emerald-300':'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
+                    {forgotMsg.text}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1152,7 +1301,33 @@ export default function App() {
     >
       {/* Audio nền dùng chung cho mọi user */}
       <audio ref={audioElRef} src={appSettings.music_url || undefined} loop preload="metadata" playsInline crossOrigin="anonymous" />
-      
+
+      {/* MODAL: nhắc tài khoản cũ bổ sung email */}
+      {emailPromptOpen && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-teal-500/40 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-teal-400">📧 Bổ sung email khôi phục</h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">Tài khoản của bạn chưa có email. Vui lòng thêm email để có thể lấy lại mật khẩu khi quên.</p>
+              </div>
+              <button onClick={() => setEmailPromptOpen(false)} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+            </div>
+            <input type="email" value={emailPromptValue} onChange={(e)=>setEmailPromptValue(e.target.value)} placeholder="you@example.com"
+              className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-sm text-slate-100 focus:outline-none placeholder-slate-600" />
+            {emailPromptMsg && (
+              <div className={`text-xs p-2 rounded-lg border ${emailPromptMsg.type==='ok'?'bg-emerald-500/10 border-emerald-500/30 text-emerald-300':'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
+                {emailPromptMsg.text}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setEmailPromptOpen(false)} className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 font-bold text-xs py-2.5 rounded-xl">Để sau</button>
+              <button onClick={handleSetEmail} className="flex-1 bg-gradient-to-r from-teal-400 to-indigo-500 text-slate-950 font-bold text-xs uppercase py-2.5 rounded-xl">Lưu email</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HEADER */}
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -1416,28 +1591,35 @@ export default function App() {
                             if (option === quizOrder[quizIndex].answer) btnStyle = "bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold";
                             else if (option === selectedAnswer) btnStyle = "bg-rose-500/20 border-rose-500 text-rose-400";
                             else btnStyle = "bg-slate-950/40 border-slate-900 text-slate-600 opacity-60";
+                          } else if (aiSolveUsed) {
+                            btnStyle = "bg-slate-950/40 border-slate-900 text-slate-600 opacity-50 cursor-not-allowed";
                           }
                           return (
-                            <button key={idx} onClick={() => handleOptionSelect(option)} disabled={isAnswered} className={`w-full p-4 rounded-xl text-left border text-xs sm:text-sm transition-all ${btnStyle}`}>
+                            <button key={idx} onClick={() => handleOptionSelect(option)} disabled={isAnswered || aiSolveUsed} className={`w-full p-4 rounded-xl text-left border text-xs sm:text-sm transition-all ${btnStyle}`}>
                               {option}
                             </button>
                           );
                         })}
                       </div>
-                      {isAnswered && (
+                      {aiSolveUsed && !isAnswered && (
+                        <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 p-2 rounded-lg">
+                          🔒 Bạn đã nhờ AI giải câu này — không thể chọn đáp án nữa. Nhấn <b>Tiếp tục</b> để sang câu tiếp theo.
+                        </div>
+                      )}
+                      {(isAnswered || aiSolveUsed) && (
                         <div className="flex justify-end pt-2">
                           <button onClick={handleNextQuestion} className="px-5 py-2 rounded-xl bg-gradient-to-r from-teal-400 to-indigo-500 text-slate-950 text-xs font-bold shadow-lg">
-                            {quizIndex === quizOrder.length - 1 ? "Xem Tổng Kết Điểm" : "Câu Tiếp Theo →"}
+                            {quizIndex === quizOrder.length - 1 ? "Xem Tổng Kết Điểm" : (aiSolveUsed && !isAnswered ? "Tiếp tục →" : "Câu Tiếp Theo →")}
                           </button>
                         </div>
                       )}
                       <div className="pt-2 border-t border-slate-800 space-y-2">
                         <button
                           onClick={handleAiSolveQuiz}
-                          disabled={aiQuizLoading}
+                          disabled={aiQuizLoading || aiSolveUsed || isAnswered}
                           className="w-full px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/40 text-indigo-300 text-xs font-bold hover:bg-indigo-500/20 transition-all disabled:opacity-50"
                         >
-                          {aiQuizLoading ? '🧠 AI đang suy luận...' : '🧠 Nhờ AI giải câu này'}
+                          {aiQuizLoading ? '🧠 AI đang suy luận...' : (aiSolveUsed ? '✅ Đã nhờ AI giải' : '🧠 Nhờ AI giải câu này (sẽ khoá câu này)')}
                         </button>
                         {aiQuizHint && (
                           <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs text-slate-200 leading-relaxed">
