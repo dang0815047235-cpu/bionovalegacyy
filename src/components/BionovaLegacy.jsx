@@ -346,7 +346,7 @@ export default function App() {
   const [forgotNewPwd, setForgotNewPwd] = useState('');
   const [forgotMsg, setForgotMsg] = useState(null); // {type, text}
   const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotDevOtp, setForgotDevOtp] = useState(''); // hiển thị nếu chưa gửi email
+  const [forgotDevOtp, setForgotDevOtp] = useState(''); // kept for compatibility; no longer used
   // Nhắc bổ sung email cho tài khoản cũ
   const [emailPromptOpen, setEmailPromptOpen] = useState(false);
   const [emailPromptValue, setEmailPromptValue] = useState('');
@@ -690,19 +690,21 @@ export default function App() {
     if (!email) { setForgotMsg({ type:'err', text:'Vui lòng nhập email' }); return; }
     setForgotLoading(true);
     try {
-      const res = await fetch('/api/public/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true },
       });
-      const body = await res.json();
-      if (!res.ok || body?.error) throw new Error(body?.error || 'Không gửi được OTP');
-      if (body?.devOtp) {
-        setForgotDevOtp(String(body.devOtp));
-        setForgotMsg({ type:'ok', text:'⚠️ Email service chưa gửi được — dùng tạm mã dev bên dưới. ' + (body.warning || '') });
-      } else {
-        setForgotMsg({ type:'ok', text:'✅ Đã gửi OTP đến email của bạn. Vui lòng kiểm tra hộp thư (kể cả Spam).' });
+      if (error) {
+        const m = String(error.message || '').toLowerCase();
+        if (m.includes('rate') || m.includes('limit')) {
+          throw new Error('Bạn yêu cầu quá nhiều lần. Vui lòng đợi vài phút rồi thử lại.');
+        }
+        if (m.includes('invalid') && m.includes('email')) {
+          throw new Error('Email không hợp lệ');
+        }
+        throw new Error(error.message || 'Không gửi được OTP');
       }
+      setForgotMsg({ type:'ok', text:'✅ Đã gửi mã OTP 6 số đến email. Vui lòng kiểm tra hộp thư (kể cả Spam).' });
       setForgotStep(2);
     } catch (err) {
       setForgotMsg({ type:'err', text: err?.message || 'Không thể gửi OTP' });
@@ -715,18 +717,29 @@ export default function App() {
     if (forgotNewPwd.length < 6) { setForgotMsg({ type:'err', text:'Mật khẩu mới tối thiểu 6 ký tự' }); return; }
     setForgotLoading(true);
     try {
-      const { data, error } = await supabase.rpc('verify_otp_and_reset', {
-        p_email: forgotEmail.trim().toLowerCase(), p_otp: otp, p_new_password: forgotNewPwd,
-      });
-      if (error) throw error;
-      if (data === true) {
-        setForgotMsg({ type:'ok', text:'✅ Đổi mật khẩu thành công! Vui lòng đăng nhập lại.' });
-        setTimeout(() => {
-          setForgotOpen(false); setForgotStep(1); setForgotEmail(''); setForgotOtp('');
-          setForgotNewPwd(''); setForgotDevOtp(''); setForgotMsg(null);
-          setAuthMode('login');
-        }, 1500);
+      const email = forgotEmail.trim().toLowerCase();
+      const { error: vErr } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+      if (vErr) {
+        const m = String(vErr.message || '').toLowerCase();
+        if (m.includes('expired')) throw new Error('Mã OTP đã hết hạn. Vui lòng gửi lại.');
+        throw new Error('Mã OTP không đúng');
       }
+      const { error: rErr } = await supabase.rpc('reset_password_by_verified_email', {
+        p_new_password: forgotNewPwd,
+      });
+      // Dọn session tạm của Supabase (app dùng session riêng)
+      try { await supabase.auth.signOut(); } catch {}
+      if (rErr) {
+        const m = String(rErr.message || '');
+        if (m.includes('Không tìm thấy')) throw new Error('Không tìm thấy tài khoản với email này');
+        throw new Error(m || 'Không đặt lại được mật khẩu');
+      }
+      setForgotMsg({ type:'ok', text:'✅ Đổi mật khẩu thành công! Vui lòng đăng nhập lại.' });
+      setTimeout(() => {
+        setForgotOpen(false); setForgotStep(1); setForgotEmail(''); setForgotOtp('');
+        setForgotNewPwd(''); setForgotDevOtp(''); setForgotMsg(null);
+        setAuthMode('login');
+      }, 1500);
     } catch (err) {
       setForgotMsg({ type:'err', text: err?.message || 'Xác thực thất bại' });
     } finally { setForgotLoading(false); }
@@ -1288,11 +1301,6 @@ export default function App() {
                 ) : (
                   <>
                     <p className="text-xs text-slate-400">Nhập mã OTP đã nhận và mật khẩu mới.</p>
-                    {forgotDevOtp && (
-                      <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 p-2 rounded-lg">
-                        🧪 <b>Dev mode</b>: Email service chưa cấu hình. Mã OTP của bạn: <code className="font-mono text-base tracking-widest">{forgotDevOtp}</code>
-                      </div>
-                    )}
                     <input type="text" inputMode="numeric" maxLength={6} value={forgotOtp} onChange={(e)=>setForgotOtp(e.target.value.replace(/\D/g,''))}
                       placeholder="000000" className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 px-4 py-2.5 rounded-xl text-lg font-mono tracking-[0.5em] text-center text-slate-100 focus:outline-none" />
                     <input type="password" value={forgotNewPwd} onChange={(e)=>setForgotNewPwd(e.target.value)} placeholder="Mật khẩu mới (≥6 ký tự)"
@@ -1727,7 +1735,7 @@ export default function App() {
                       return idx;
                     })();
                     return (
-                      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-teal-900/20 border border-teal-500/30 rounded-2xl p-6 animate-fade-in">
+                      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-teal-900/20 border border-teal-500/30 rounded-2xl p-6 animate-fade-in overflow-hidden">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-base font-extrabold text-teal-300 flex items-center gap-2">🌿 Hành Trình Tiến Hoá Của Bạn</h3>
                           <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-full">
@@ -1735,7 +1743,7 @@ export default function App() {
                           </span>
                         </div>
                         <div className="relative">
-                          <div className="flex gap-3 overflow-x-auto pb-3 snap-x">
+                          <div className="flex gap-3 overflow-x-auto overflow-y-hidden py-3 px-1 snap-x">
                             {path.map((t, i) => {
                               const reached = isAdmin || score >= t.min;
                               const isCurrent = !isAdmin && i === currentIdx;
@@ -1745,19 +1753,19 @@ export default function App() {
                                   key={t.name}
                                   disabled={!reached || isChosen}
                                   onClick={() => handleSelectTitle(t.name)}
-                                  className={`snap-start flex-shrink-0 w-24 rounded-2xl border-2 p-2.5 flex flex-col items-center gap-1 transition-all ${
-                                    isChosen ? 'border-amber-400 bg-amber-500/[0.12] scale-105 shadow-lg shadow-amber-500/20' :
-                                    isCurrent ? 'border-teal-400 bg-teal-500/[0.15] scale-105 animate-pulse' :
-                                    reached ? 'border-emerald-500/60 bg-emerald-500/[0.06] hover:scale-105 cursor-pointer' :
-                                    'border-slate-800 bg-slate-950 opacity-40'
+                                  className={`snap-start flex-shrink-0 w-28 rounded-2xl border-2 p-3 flex flex-col items-center gap-1.5 transition-colors ${
+                                    isChosen ? 'border-amber-400 bg-amber-500/20 shadow-lg shadow-amber-500/20 ring-2 ring-amber-300/40' :
+                                    isCurrent ? 'border-teal-400 bg-teal-500/20 ring-2 ring-teal-300/40' :
+                                    reached ? 'border-emerald-500/60 bg-emerald-500/10 hover:bg-emerald-500/20 cursor-pointer' :
+                                    'border-slate-800 bg-slate-950 opacity-50'
                                   }`}
                                   title={t.desc}
                                 >
-                                  <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg font-black ${reached ? 'bg-gradient-to-br from-teal-400 to-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}>
+                                  <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg font-black shrink-0 ${reached ? 'bg-gradient-to-br from-teal-400 to-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}>
                                     {reached ? '★' : '🔒'}
                                   </div>
-                                  <p className="text-[10px] font-extrabold text-center text-slate-200 leading-tight line-clamp-2">{t.name}</p>
-                                  <span className="text-[9px] text-slate-500 font-mono">{t.min}+ đ</span>
+                                  <p className="text-xs font-bold text-center text-slate-50 leading-snug line-clamp-2 min-h-[2.25rem] break-words">{t.name}</p>
+                                  <span className="text-[10px] text-slate-300 font-mono">{t.min}+ đ</span>
                                 </button>
                               );
                             })}
