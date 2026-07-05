@@ -690,10 +690,10 @@ export default function App() {
     if (!email) { setForgotMsg({ type:'err', text:'Vui lòng nhập email' }); return; }
     setForgotLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(
+      const { error } = await supabase.auth.signInWithOtp({
         email,
-        { redirectTo: window.location.origin }
-      );
+        options: { shouldCreateUser: true },
+      });
       if (error) {
         const m = String(error.message || '').toLowerCase();
         if (m.includes('rate') || m.includes('limit')) {
@@ -718,16 +718,20 @@ export default function App() {
     setForgotLoading(true);
     try {
       const email = forgotEmail.trim().toLowerCase();
-      const { error: vErr } = await supabase.auth.verifyOtp({ email, token: otp, type: 'recovery' });
+      const { error: vErr } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
       if (vErr) {
         const m = String(vErr.message || '').toLowerCase();
         if (m.includes('expired')) throw new Error('Mã OTP đã hết hạn. Vui lòng gửi lại.');
         throw new Error('Mã OTP không đúng');
       }
-      const { error: rErr } = await supabase.auth.updateUser({ password: forgotNewPwd });
+      const { error: rErr } = await supabase.rpc('reset_password_by_verified_email', {
+        p_new_password: forgotNewPwd,
+      });
       try { await supabase.auth.signOut(); } catch {}
       if (rErr) {
-        throw new Error(rErr.message || 'Không đặt lại được mật khẩu');
+        const m = String(rErr.message || '');
+        if (m.includes('Không tìm thấy')) throw new Error('Không tìm thấy tài khoản với email này');
+        throw new Error(m || 'Không đặt lại được mật khẩu');
       }
       setForgotMsg({ type:'ok', text:'Đổi mật khẩu thành công' });
       setTimeout(() => {
